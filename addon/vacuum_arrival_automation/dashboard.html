@@ -1,0 +1,777 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vacuum Automation Dashboard</title>
+  <style>
+    :root {
+      --bg: #f4f6f5;
+      --panel: #ffffff;
+      --panel-soft: #f0f3f2;
+      --ink: #17201b;
+      --muted: #63706a;
+      --line: #dde4e0;
+      --accent: #227a55;
+      --accent-soft: #e4f3ec;
+      --accent-strong: #145b3d;
+      --warning: #a76522;
+      --warning-soft: #fef6e6;
+      --danger: #b24c3d;
+      --danger-soft: #fef2f0;
+      --shadow: 0 2px 8px rgba(21, 32, 25, 0.06);
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      line-height: 1.4;
+    }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .dashboard-left,
+    .dashboard-right {
+      display: grid;
+      gap: 16px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .hero-card {
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    .hero-main {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .hero-status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .status-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      font-size: 24px;
+      flex: 0 0 auto;
+    }
+    .status-icon.cleaning { background: var(--accent-soft); }
+    .status-icon.idle { background: var(--panel-soft); }
+    .status-icon.error { background: var(--danger-soft); }
+    .hero-text { min-width: 0; }
+    .hero-text h1 {
+      margin: 0;
+      font-size: 23px;
+      line-height: 1.15;
+      font-weight: 700;
+    }
+    .hero-text p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .hero-badge {
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .hero-badge.active {
+      background: var(--accent);
+      color: white;
+    }
+    .hero-badge.idle {
+      background: var(--panel-soft);
+      color: var(--muted);
+    }
+    .hero-progress {
+      background: var(--panel-soft);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      align-items: center;
+      gap: 16px;
+    }
+    .progress-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .progress-info strong {
+      display: block;
+      font-size: 15px;
+      margin-bottom: 2px;
+    }
+    .progress-info span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .progress-bar {
+      width: 140px;
+      height: 6px;
+      background: var(--line);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-bar > span {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+    }
+    .robot-compact {
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .robot-summary {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .robot-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 4px var(--accent-soft);
+      flex: 0 0 auto;
+    }
+    .robot-alerts {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+    .robot-alert {
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .robot-alert.warning {
+      background: var(--warning-soft);
+      color: var(--warning);
+    }
+    .robot-alert.error {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+    .presence-card,
+    .queue-card {
+      padding: 16px;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .section-header h2 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 650;
+      color: var(--muted);
+    }
+    .presence-summary {
+      font-size: 14px;
+      font-weight: 650;
+      padding: 4px 10px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .presence-summary.clear {
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+    }
+    .presence-summary.blocked {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+    .presence-overview {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .presence-metric {
+      min-width: 0;
+      padding: 12px;
+      background: var(--panel-soft);
+      border-radius: 8px;
+    }
+    .presence-metric.primary {
+      background: var(--accent-soft);
+      border: 1px solid rgba(34, 122, 85, 0.18);
+    }
+    .presence-metric.warning {
+      background: var(--warning-soft);
+      border: 1px solid rgba(167, 101, 34, 0.18);
+    }
+    .presence-metric.blocked {
+      background: var(--danger-soft);
+      border: 1px solid rgba(178, 76, 61, 0.18);
+    }
+    .presence-metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      margin-bottom: 4px;
+    }
+    .presence-metric strong {
+      display: block;
+      color: var(--ink);
+      font-size: 18px;
+      line-height: 1.15;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .presence-metric.primary strong {
+      color: var(--accent-strong);
+    }
+    .presence-metric.warning strong {
+      color: var(--warning);
+    }
+    .presence-metric.blocked strong {
+      color: var(--danger);
+    }
+    .presence-list,
+    .room-list {
+      display: grid;
+      gap: 8px;
+    }
+    .person-row,
+    .room-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--panel-soft);
+      border-radius: 8px;
+    }
+    .person-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .person-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--line);
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+    .person-name,
+    .room-name {
+      font-weight: 650;
+      font-size: 14px;
+    }
+    .person-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      text-align: right;
+      flex: 0 0 auto;
+    }
+    .pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .pill.home { background: var(--danger-soft); color: var(--danger); }
+    .pill.away { background: var(--accent-soft); color: var(--accent-strong); }
+    .room-row {
+      padding: 12px;
+      gap: 10px;
+      transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: grab;
+    }
+    .room-row.dragging {
+      opacity: 0.55;
+      cursor: grabbing;
+    }
+    .room-placeholder {
+      height: 0;
+      border-top: 2px solid var(--accent);
+      border-radius: 999px;
+      margin: 2px 0;
+      transition: margin 140ms ease;
+    }
+    .room-section {
+      margin: 6px 0 2px;
+      padding: 2px 2px 0;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .room-section.drop-target,
+    .room-empty.drop-target {
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      outline: 1px dashed var(--accent);
+      outline-offset: 2px;
+    }
+    .room-row.next {
+      background: var(--accent-soft);
+      border: 1px solid rgba(34, 122, 85, 0.2);
+    }
+    .room-rank {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: var(--panel);
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 750;
+      color: var(--muted);
+      flex: 0 0 auto;
+    }
+    .room-row.next .room-rank {
+      background: var(--accent);
+      color: white;
+    }
+    .room-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .room-title {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .room-last-cleaned {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .room-reason {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    .room-actions {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .room-action {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .room-action.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    .room-progress {
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .room-progress-bar {
+      flex: 1;
+      height: 8px;
+      background: rgba(34, 122, 85, 0.12);
+      border-radius: 999px;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .room-progress-bar > span {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      border-radius: 999px;
+    }
+    .room-progress-value {
+      color: var(--accent-strong);
+      font-size: 12px;
+      font-weight: 750;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .room-duration {
+      text-align: right;
+      flex: 0 0 auto;
+    }
+    .room-duration strong {
+      display: block;
+      font-size: 14px;
+    }
+    .room-duration span {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 14px;
+      padding: 12px;
+      background: var(--panel-soft);
+      border-radius: 8px;
+    }
+    .override-note {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 10px;
+    }
+    .room-empty {
+      color: var(--muted);
+      font-size: 13px;
+      padding: 10px 12px;
+      background: var(--panel-soft);
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+    @media (max-width: 900px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    @media (max-width: 640px) {
+      .shell { padding: 16px; }
+      .hero-main,
+      .robot-compact {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .presence-overview {
+        grid-template-columns: 1fr;
+      }
+      .robot-alerts {
+        justify-content: flex-start;
+      }
+      .person-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .room-row {
+        align-items: flex-start;
+      }
+      .person-status {
+        text-align: left;
+        flex-wrap: wrap;
+      }
+      .progress-bar {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="dashboard-grid">
+      <div class="dashboard-left">
+        <section class="card hero-card" aria-label="Staubsaugerstatus">
+          <div class="hero-main">
+            <div class="hero-status">
+              <div class="status-icon {{hero_icon_class}}">{{hero_icon}}</div>
+              <div class="hero-text">
+                <h1>{{hero_title}}</h1>
+                <p>{{hero_reason}}</p>
+              </div>
+            </div>
+            <div class="hero-badge {{hero_badge_class}}">{{hero_badge}}</div>
+          </div>
+          <div class="hero-progress" style="display: {{progress_display}}">
+            <div class="progress-info">
+              <strong>{{progress_room}}</strong>
+              <span>{{progress_remaining}}</span>
+            </div>
+            <div class="progress-bar" aria-hidden="true">
+              <span style="width: {{progress_width}}"></span>
+            </div>
+          </div>
+        </section>
+
+        <section class="card robot-compact" aria-label="Roboterzustand">
+          <div class="robot-summary">
+            <span class="robot-dot" aria-hidden="true"></span>
+            <span>{{robot_summary}}</span>
+          </div>
+          <div class="robot-alerts">{{{robot_alerts}}}</div>
+        </section>
+
+        <section class="card presence-card" aria-label="Anwesenheit">
+          <div class="section-header">
+            <h2>Anwesenheit</h2>
+            <div class="presence-summary {{presence_summary_class}}">{{presence_summary}}</div>
+          </div>
+          <div class="presence-overview">
+            <div class="presence-metric {{travel_metric_class}}">
+              <span>Nächste Rückkehr</span>
+              <strong>{{travel_time}}</strong>
+            </div>
+            <div class="presence-metric {{window_metric_class}}">
+              <span>Reinigungsfenster</span>
+              <strong>{{return_window}}</strong>
+            </div>
+            <div class="presence-metric">
+              <span>Aktueller Puffer</span>
+              <strong>{{return_buffer}}</strong>
+            </div>
+          </div>
+          <div class="presence-list">
+            {{{presence_rows}}}
+          </div>
+        </section>
+      </div>
+
+      <div class="dashboard-right">
+        <section class="card queue-card" aria-label="Nächste Räume">
+          <div class="section-header">
+            <h2>Reinigungsplan</h2>
+          </div>
+          <div class="room-list" data-room-list>
+            {{{room_sections}}}
+          </div>
+          <p class="override-note">Räume innerhalb eines Abschnitts ziehen, um sie einmalig vorzuziehen. Zwischen den Abschnitten ziehen, um den Status zu überschreiben.</p>
+        </section>
+      </div>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const list = document.querySelector("[data-room-list]");
+      if (!list) return;
+
+      let dragged = null;
+      const placeholder = document.createElement("div");
+      placeholder.className = "room-placeholder";
+
+      async function postJson(path, payload) {
+        const response = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error(await response.text());
+      }
+
+      function clearDropTargets() {
+        list.querySelectorAll(".drop-target").forEach((node) => node.classList.remove("drop-target"));
+      }
+
+      function clearPlaceholder() {
+        if (placeholder.parentNode) {
+          placeholder.parentNode.removeChild(placeholder);
+        }
+      }
+
+      function updateRanks() {
+        list.querySelectorAll(".room-row").forEach((row, index) => {
+          const rank = row.querySelector(".room-rank");
+          if (rank) rank.textContent = String(index + 1);
+          row.classList.toggle("next", index === 0);
+        });
+      }
+
+      function sectionKindFor(node) {
+        return node?.dataset?.roomSectionKind || "";
+      }
+
+      function sectionMarkerForKind(kind) {
+        return list.querySelector(`.room-section[data-room-section-kind="${kind}"]`);
+      }
+
+      async function applySectionAction(roomKey, kind) {
+        if (kind === "active") {
+          await postJson("/api/start_room", { room_key: roomKey });
+          window.location.reload();
+          return;
+        }
+        if (kind === "due") {
+          await postJson("/api/set_room_due", { room_key: roomKey, due: true });
+          window.location.reload();
+          return;
+        }
+        if (kind === "later") {
+          await postJson("/api/set_room_due", { room_key: roomKey, due: false });
+          window.location.reload();
+        }
+      }
+
+      list.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-room-action]");
+        if (!button) return;
+
+        const action = button.dataset.roomAction;
+        const roomKey = button.dataset.roomKey;
+        if (!roomKey) return;
+
+        try {
+          if (action === "start") {
+            await postJson("/api/start_room", { room_key: roomKey });
+          } else if (action === "due") {
+            await postJson("/api/set_room_due", { room_key: roomKey, due: true });
+          }
+          window.location.reload();
+        } catch (error) {
+          window.location.reload();
+        }
+      });
+
+      list.addEventListener("dragstart", (event) => {
+        const row = event.target.closest("[data-room-key]");
+        if (!row) return;
+        dragged = row;
+        row.classList.add("dragging");
+        row.after(placeholder);
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", row.dataset.roomKey);
+      });
+
+      list.addEventListener("dragend", () => {
+        list.querySelectorAll(".dragging").forEach((row) => row.classList.remove("dragging"));
+        clearDropTargets();
+        clearPlaceholder();
+        dragged = null;
+      });
+
+      list.addEventListener("dragover", (event) => {
+        if (!dragged) return;
+
+        const target = event.target.closest("[data-room-key]");
+        const sourceKind = sectionKindFor(dragged);
+
+        if (target && target !== dragged) {
+          const targetKind = sectionKindFor(target);
+          event.preventDefault();
+
+          if (targetKind && targetKind !== sourceKind) {
+            clearPlaceholder();
+            clearDropTargets();
+            sectionMarkerForKind(targetKind)?.classList.add("drop-target");
+            return;
+          }
+
+          clearDropTargets();
+          const rect = target.getBoundingClientRect();
+          const insertAfter = event.clientY > rect.top + rect.height / 2;
+          const referenceNode = insertAfter ? target.nextSibling : target;
+
+          if (referenceNode === dragged || referenceNode === dragged?.nextSibling) {
+            return;
+          }
+          if (referenceNode === placeholder) return;
+          list.insertBefore(placeholder, referenceNode);
+          return;
+        }
+
+        const sectionTarget = event.target.closest("[data-room-section-kind]");
+        const targetKind = sectionKindFor(sectionTarget);
+        if (!targetKind || targetKind === sourceKind) return;
+        event.preventDefault();
+        clearPlaceholder();
+        clearDropTargets();
+        sectionTarget.classList.add("drop-target");
+      });
+
+      list.addEventListener("drop", async (event) => {
+        if (!dragged) return;
+        event.preventDefault();
+
+        const targetRow = event.target.closest("[data-room-key]");
+        const targetSection = event.target.closest("[data-room-section-kind]");
+        const sourceKind = sectionKindFor(dragged);
+        const targetKind = sectionKindFor(targetRow || targetSection);
+
+        if (targetKind && targetKind !== sourceKind) {
+          clearDropTargets();
+          clearPlaceholder();
+          dragged.classList.remove("dragging");
+          const roomKey = dragged.dataset.roomKey;
+          dragged = null;
+          try {
+            await applySectionAction(roomKey, targetKind);
+          } catch (error) {
+            window.location.reload();
+          }
+          return;
+        }
+
+        if (!placeholder.parentNode) return;
+        if (placeholder.previousSibling === dragged || placeholder.nextSibling === dragged) {
+          clearDropTargets();
+          clearPlaceholder();
+          dragged.classList.remove("dragging");
+          dragged = null;
+          return;
+        }
+
+        list.insertBefore(dragged, placeholder);
+        clearDropTargets();
+        clearPlaceholder();
+        updateRanks();
+
+        try {
+          await postJson("/api/prioritize_room", { room_key: dragged.dataset.roomKey });
+        } catch (error) {
+          window.location.reload();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

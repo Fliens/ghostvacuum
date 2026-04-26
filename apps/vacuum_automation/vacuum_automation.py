@@ -23,6 +23,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import appdaemon.plugins.hass.hassapi as hass
 
+EVENT_START_ROOM = "vacuum_automation_start_room"
+EVENT_SET_ROOM_DUE = "vacuum_automation_set_room_due"
+
 
 class VacuumAutomation(hass.Hass):
     """Adaptive vacuum automation that aims to finish before residents get home."""
@@ -60,6 +63,10 @@ class VacuumAutomation(hass.Hass):
         self.dashboard_path = self.args.get("dashboard_path", "")
         self.state_helper = self.args.get(
             "state_helper", "input_text.vacuum_automation_state"
+        )
+        self.one_time_room_override_entity = self.args.get(
+            "one_time_room_override_entity",
+            f"input_text.{self.args.get('helper_prefix', 'vacuum_automation')}_one_time_room_override",
         )
         self.enabled_entity = self.args.get("enabled_entity")
         self.learning_enabled_entity = self.args.get(
@@ -189,6 +196,8 @@ class VacuumAutomation(hass.Hass):
             attribute="all",
         )
         self.listen_state(self._on_vacuum_state_change, self.vacuum_entity)
+        self.listen_event(self._on_dashboard_start_room, EVENT_START_ROOM)
+        self.listen_event(self._on_dashboard_set_room_due, EVENT_SET_ROOM_DUE)
 
         for entity_id in self._list_runtime_helper_entities():
             if entity_id:
@@ -464,9 +473,47 @@ class VacuumAutomation(hass.Hass):
 
     def _presence_summary(self) -> List[dict]:
         return [
-            {"entity_id": entity_id, "state": self._presence_state(entity_id)}
+            self._person_presence_summary(entity_id)
             for entity_id in self.presence_entities
         ]
+
+    def _person_presence_summary(self, entity_id: str) -> dict:
+        state = self._presence_state(entity_id)
+        distance_km = self._person_distance_to_home(entity_id, state)
+        travel_time_min = None
+        if distance_km is not None:
+            travel_time_min = 0 if distance_km <= 0 else max(
+                1,
+                round((distance_km / self._current_fallback_speed_kmh()) * 60),
+            )
+
+        return {
+            "entity_id": entity_id,
+            "state": state,
+            "distance_km": round(distance_km, 1) if distance_km is not None else None,
+            "travel_time_min": travel_time_min,
+        }
+
+    def _person_distance_to_home(self, entity_id: str, state: str) -> Optional[float]:
+        if self._is_home_like_state(state):
+            return 0.0
+
+        person_state = self.get_state(entity_id, attribute="all")
+        home_state = self.get_state(self.home_zone, attribute="all")
+        if not isinstance(person_state, dict) or not isinstance(home_state, dict):
+            return None
+
+        person_attrs = person_state.get("attributes", {})
+        home_attrs = home_state.get("attributes", {})
+        try:
+            return self._haversine_km(
+                float(person_attrs["latitude"]),
+                float(person_attrs["longitude"]),
+                float(home_attrs["latitude"]),
+                float(home_attrs["longitude"]),
+            )
+        except Exception:
+            return None
 
     def _read_numeric_state(self, entity_id: Optional[str]) -> Optional[float]:
         if not entity_id:
@@ -875,6 +922,26 @@ class VacuumAutomation(hass.Hass):
                 }
             )
 
+        override_room = self._one_time_room_override()
+        if override_room:
+            for candidate in candidates:
+                if candidate["room"] == override_room:
+                    if log_selection:
+                        self.log(
+                            "Einmaliger Raum-Vorzug: "
+                            f"{self._room_label(override_room)} "
+                            f"(dauer={candidate['duration']}min)"
+                        )
+                    return str(override_room)
+
+            if log_selection:
+                self.log(
+                    "Einmaliger Raum-Vorzug nicht nutzbar: "
+                    f"{override_room} passt nicht ins aktuelle Fenster",
+                    level="INFO",
+                )
+            self._clear_one_time_room_override()
+
         candidates.sort(
             key=lambda item: (
                 not item["overdue"],
@@ -913,6 +980,64 @@ class VacuumAutomation(hass.Hass):
         vacuum_state = self.get_state(self.vacuum_entity)
         return vacuum_state in ["idle", "docked"]
 
+    def _one_time_room_override(self) -> Optional[str]:
+        if not self.one_time_room_override_entity:
+            return None
+
+        value = str(self.get_state(self.one_time_room_override_entity) or "").strip()
+        if not value or value.lower() in {"unknown", "unavailable", "none"}:
+            return None
+        return value if value in self.rooms else None
+
+    def _clear_one_time_room_override(self):
+        if not self.one_time_room_override_entity:
+            return
+
+        try:
+            self.call_service(
+                "input_text/set_value",
+                entity_id=self.one_time_room_override_entity,
+                value="",
+            )
+        except Exception as err:
+            self.log(
+                f"Einmaligen Raum-Vorzug konnte nicht geloescht werden: {err}",
+                level="WARNING",
+            )
+
+    def _mark_room_due_state(self, room: str, due: bool):
+        interval_h = max(1, int(round(self._room_interval_h(room))))
+        self.last_cleaned[room] = (
+            self.datetime() - timedelta(hours=interval_h) if due else self.datetime()
+        )
+        self._save_state()
+        self._publish_dashboard_state("raum_override")
+
+    def _on_dashboard_set_room_due(self, event_name, data, kwargs):
+        room = str((data or {}).get("room_key") or "").strip()
+        due = bool((data or {}).get("due"))
+        if room not in self.rooms:
+            return
+
+        self._mark_room_due_state(room, due)
+
+    def _on_dashboard_start_room(self, event_name, data, kwargs):
+        room = str((data or {}).get("room_key") or "").strip()
+        if room not in self.rooms or not self._can_start_cleaning():
+            return
+
+        available_time = self._calculate_available_time_minutes(log_context=False)
+        duration = self._room_effective_duration_min(room)
+        if duration + self._current_return_buffer_min() > available_time:
+            self.log(
+                f"Manueller Start abgelehnt fuer {self._room_label(room)}: "
+                f"verfuegbar={available_time}min, dauer={duration}min",
+                level="INFO",
+            )
+            return
+
+        self._start_cleaning(room)
+
     def _start_cleaning(self, room: str):
         segment_id = self.rooms[room]["segment_id"]
         self.active_room = room
@@ -922,6 +1047,7 @@ class VacuumAutomation(hass.Hass):
         self.active_room_travel_time_min = int(round(self._get_travel_time_minutes()))
         self.active_room_distance_km = self._get_distance_km()
         self.abort_requested = False
+        self._clear_one_time_room_override()
 
         self.call_service(
             "dreame_vacuum/vacuum_clean_segment",
@@ -1317,6 +1443,7 @@ class VacuumAutomation(hass.Hass):
                 "remaining_min": self._estimate_remaining_room_minutes(self.active_room),
                 "planned_duration_min": self.active_room_planned_duration_min,
                 "configured_duration_min": self.active_room_configured_duration_min,
+                "travel_time_min_at_start": self.active_room_travel_time_min,
             },
         )
         self.set_state(

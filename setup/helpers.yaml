@@ -6,6 +6,10 @@ input_text:
     name: Vacuum Automation State
     max: 1024
     initial: "{}"
+  vacuum_automation_one_time_room_override:
+    name: Vacuum One-Time Room Priority
+    max: 128
+    initial: ""
 
 input_boolean:
   vacuum_automation_enabled:

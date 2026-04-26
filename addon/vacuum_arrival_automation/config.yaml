@@ -39,6 +39,7 @@ options:
   dashboard_prefix: vacuum_automation
   helper_prefix: vacuum_automation
   state_helper: input_text.vacuum_automation_state
+  one_time_room_override_entity: input_text.vacuum_automation_one_time_room_override
   enabled_entity: input_boolean.vacuum_automation_enabled
   learning_enabled_entity: input_boolean.vacuum_automation_learning_enabled
   start_hour_entity: input_number.vacuum_automation_start_hour
@@ -124,6 +125,7 @@ schema:
   dashboard_prefix: str
   helper_prefix: str
   state_helper: str
+  one_time_room_override_entity: str
   enabled_entity: str
   learning_enabled_entity: str
   start_hour_entity: str

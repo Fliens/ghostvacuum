@@ -55,6 +55,41 @@ The Supervisor add-on provides a built-in sidebar dashboard for:
 - automation toggles
 - notification toggles
 
+## Local Dashboard Development
+
+You can run the add-on dashboard locally with mocked Home Assistant data:
+
+```bash
+./scripts/dev_dashboard.sh
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8099
+```
+
+Running the command again restarts the previously tracked local dashboard, so you
+do not need to manually `pkill` old Python processes while iterating.
+
+The server reads `addon/vacuum_arrival_automation/dashboard.html` on every
+browser refresh and the add-on ships the same file. You can edit the HTML/CSS
+directly without restarting the Python server.
+
+Useful commands:
+
+```bash
+./scripts/dev_dashboard.sh status
+./scripts/dev_dashboard.sh stop
+./scripts/dev_dashboard.sh restart
+```
+
+To use another port:
+
+```bash
+SIDEBAR_REDIRECT_PORT=8100 ./scripts/dev_dashboard.sh
+```
+
 ## Sensors Exposed by the App
 
 - `sensor.vacuum_automation_status`

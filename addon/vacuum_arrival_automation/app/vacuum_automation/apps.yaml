@@ -34,6 +34,7 @@ vacuum_automation:
 
   # Optional helpers and dashboard state
   state_helper: input_text.vacuum_automation_state
+  one_time_room_override_entity: input_text.vacuum_automation_one_time_room_override
   enabled_entity: input_boolean.vacuum_automation_enabled
   learning_enabled_entity: input_boolean.vacuum_automation_learning_enabled
   dashboard_prefix: vacuum_automation

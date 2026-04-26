@@ -199,6 +199,10 @@ def default_options(raw_options: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "state_helper": normalize_str(raw_options.get("state_helper"))
         or f"input_text.{helper_prefix}_state",
+        "one_time_room_override_entity": normalize_str(
+            raw_options.get("one_time_room_override_entity")
+        )
+        or f"input_text.{helper_prefix}_one_time_room_override",
         "enabled_entity": normalize_str(raw_options.get("enabled_entity"))
         or f"input_boolean.{helper_prefix}_enabled",
         "learning_enabled_entity": normalize_str(
@@ -294,6 +298,7 @@ def build_app_config(options: Dict[str, Any]) -> Dict[str, Any]:
         "home_zone": options["home_zone"],
         "travel_pause_after_hours": options["travel_pause_after_hours"],
         "state_helper": options["state_helper"],
+        "one_time_room_override_entity": options["one_time_room_override_entity"],
         "enabled_entity": options["enabled_entity"],
         "learning_enabled_entity": options["learning_enabled_entity"],
         "dashboard_prefix": options["dashboard_prefix"],
@@ -369,6 +374,9 @@ def room_title(room: Dict[str, Any]) -> str:
 def build_helpers(options: Dict[str, Any]) -> Dict[str, Any]:
     helper_prefix = options["helper_prefix"]
     state_object = helper_object_id(options["state_helper"], "input_text")
+    one_time_room_override_object = helper_object_id(
+        options["one_time_room_override_entity"], "input_text"
+    )
     enabled_object = helper_object_id(options["enabled_entity"], "input_boolean")
     learning_object = helper_object_id(
         options["learning_enabled_entity"], "input_boolean"
@@ -414,6 +422,11 @@ def build_helpers(options: Dict[str, Any]) -> Dict[str, Any]:
             "name": "Vacuum Automation State",
             "max": 1024,
             "initial": "{}",
+        },
+        one_time_room_override_object: {
+            "name": "Vacuum One-Time Room Priority",
+            "max": 128,
+            "initial": "",
         }
     }
 
