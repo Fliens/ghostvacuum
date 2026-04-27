@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import html
-from datetime import datetime
+from datetime import datetime, timedelta
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,6 +26,7 @@ LOCAL_OPTIONS_ENV = "VACUUM_DASHBOARD_OPTIONS"
 LOCAL_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 LOCAL_DASHBOARD_PATH = Path(__file__).with_name("dashboard.html")
 MOCK_STATES: dict[str, dict] | None = None
+ADDON_NAME = "Vacuum Arrival Automation"
 
 
 def load_dashboard_template() -> str:
@@ -64,6 +65,16 @@ def load_options() -> dict:
         return json.loads(OPTIONS_PATH.read_text())
     except Exception:
         return {}
+
+
+def addon_name() -> str:
+    if local_dev_enabled() and LOCAL_CONFIG_PATH.exists():
+        try:
+            config = yaml.safe_load(LOCAL_CONFIG_PATH.read_text()) or {}
+            return str(config.get("name") or ADDON_NAME)
+        except Exception:
+            return ADDON_NAME
+    return ADDON_NAME
 
 
 def parse_rooms(raw_rooms: Any) -> List[dict]:
@@ -122,6 +133,17 @@ def state_for(entity_id: str):
         return api_request(f"/states/{entity_id}")
     except Exception:
         return None
+
+
+def all_states():
+    if local_dev_enabled():
+        return list(mock_states().values())
+
+    try:
+        states = api_request("/states")
+        return states if isinstance(states, list) else []
+    except Exception:
+        return []
 
 
 def service_call(domain: str, service: str, entity_id: str, data: dict | None = None):
@@ -381,12 +403,12 @@ def mock_states() -> dict[str, dict]:
             {
                 "entity_id": "person.resident_2",
                 "state": "not_home",
-                "distance_km": 18.4,
-                "travel_time_min": 55,
+                "distance_km": 32.4,
+                "travel_time_min": 97,
             },
         ],
         "cleaned_during_absence": ["Bad", "Kueche"],
-        "away_since": "2026-04-26 10:15",
+        "away_since": (datetime.now() - timedelta(hours=4)).isoformat(timespec="minutes"),
         "travel_mode_reason": "inside local radius",
         "distance_km": 11.8,
         "travel_pause_radius_km": options.get("travel_pause_radius_km", 25),
@@ -428,6 +450,53 @@ def mock_states() -> dict[str, dict]:
             "water_tank_empty": False,
             "mop_attached": True,
         },
+    )
+    vacuum_base = vacuum_base_id(vacuum_entity)
+    states[f"sensor.{vacuum_base}_battery_level"] = mock_state(
+        f"sensor.{vacuum_base}_battery_level",
+        78,
+        {"unit_of_measurement": "%"},
+    )
+    states[f"binary_sensor.{vacuum_base}_charging_state"] = mock_state(
+        f"binary_sensor.{vacuum_base}_charging_state",
+        "off",
+    )
+    states[f"sensor.{vacuum_base}_error"] = mock_state(
+        f"sensor.{vacuum_base}_error",
+        "no_error",
+        {"value": "no_error"},
+    )
+    states[f"sensor.{vacuum_base}_water_tank"] = mock_state(
+        f"sensor.{vacuum_base}_water_tank",
+        "mop_installed",
+    )
+    states[f"sensor.{vacuum_base}_low_water_warning"] = mock_state(
+        f"sensor.{vacuum_base}_low_water_warning",
+        "no_warning",
+    )
+    states[f"sensor.{vacuum_base}_mop_pad"] = mock_state(
+        f"sensor.{vacuum_base}_mop_pad",
+        "installed",
+    )
+    states[f"sensor.{vacuum_base}_self_wash_base_status"] = mock_state(
+        f"sensor.{vacuum_base}_self_wash_base_status",
+        "idle",
+    )
+    states[f"sensor.{vacuum_base}_clean_water_tank_status"] = mock_state(
+        f"sensor.{vacuum_base}_clean_water_tank_status",
+        "installed",
+    )
+    states[f"sensor.{vacuum_base}_dirty_water_tank_status"] = mock_state(
+        f"sensor.{vacuum_base}_dirty_water_tank_status",
+        "installed",
+    )
+    states[f"sensor.{vacuum_base}_dust_bag_status"] = mock_state(
+        f"sensor.{vacuum_base}_dust_bag_status",
+        "installed",
+    )
+    states[f"sensor.{vacuum_base}_detergent_status"] = mock_state(
+        f"sensor.{vacuum_base}_detergent_status",
+        "low_detergent",
     )
 
     MOCK_STATES = states
@@ -494,6 +563,77 @@ def collect_states(entity_map: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
+ROBOT_SIGNAL_SUFFIXES = {
+    "battery_level": "sensor.{base}_battery_level",
+    "charging_state": "binary_sensor.{base}_charging_state",
+    "state": "sensor.{base}_state",
+    "status": "sensor.{base}_status",
+    "task_status": "sensor.{base}_task_status",
+    "error": "sensor.{base}_error",
+    "water_tank": "sensor.{base}_water_tank",
+    "low_water_warning": "sensor.{base}_low_water_warning",
+    "mop_pad": "sensor.{base}_mop_pad",
+    "dust_collection": "sensor.{base}_dust_collection",
+    "auto_empty_status": "sensor.{base}_auto_empty_status",
+    "self_wash_base_status": "sensor.{base}_self_wash_base_status",
+    "clean_water_tank_status": "sensor.{base}_clean_water_tank_status",
+    "dirty_water_tank_status": "sensor.{base}_dirty_water_tank_status",
+    "dust_bag_status": "sensor.{base}_dust_bag_status",
+    "detergent_status": "sensor.{base}_detergent_status",
+    "station_drainage_status": "sensor.{base}_station_drainage_status",
+    "dust_bag_drying_status": "sensor.{base}_dust_bag_drying_status",
+    "drainage_status": "sensor.{base}_drainage_status",
+    "drying_left": "sensor.{base}_drying_left",
+}
+
+
+def vacuum_base_id(vacuum_entity: str) -> str:
+    if "." not in str(vacuum_entity):
+        return str(vacuum_entity or "").strip()
+    return str(vacuum_entity).split(".", 1)[1].strip()
+
+
+def configured_robot_entities(options: dict) -> dict:
+    configured = options.get("robot_status_entities") or options.get("dreame_status_entities") or {}
+    return configured if isinstance(configured, dict) else {}
+
+
+def collect_robot_states(options: dict, vacuum_state: Any) -> dict:
+    vacuum_entity = str(options.get("vacuum_entity") or "")
+    base = vacuum_base_id(vacuum_entity)
+    configured = configured_robot_entities(options)
+    signals = {}
+
+    for key, template in ROBOT_SIGNAL_SUFFIXES.items():
+        entity_id = str(configured.get(key) or template.format(base=base)).strip()
+        signals[key] = state_for(entity_id) if entity_id else None
+
+    # Some Home Assistant setups rename the Dreame entities. If the inferred
+    # names miss, scan entities with the same object-id prefix as a soft fallback.
+    missing = {key for key, value in signals.items() if not isinstance(value, dict)}
+    if missing and base:
+        for state in all_states():
+            entity_id = str(state.get("entity_id") or "")
+            if not entity_id.startswith(("sensor.", "binary_sensor.")):
+                continue
+            object_id = entity_id.split(".", 1)[1]
+            if not object_id.startswith(f"{base}_"):
+                continue
+            suffix = object_id[len(base) + 1 :]
+            if suffix in missing:
+                signals[suffix] = state
+                missing.remove(suffix)
+                if not missing:
+                    break
+
+    return {
+        "entity_id": vacuum_entity,
+        "base": base,
+        "vacuum": vacuum_state,
+        "signals": signals,
+    }
+
+
 def build_summary() -> dict:
     options = load_options()
     rooms = parse_rooms(options.get("rooms"))
@@ -502,6 +642,7 @@ def build_summary() -> dict:
     status_state = states["sensors"].get("status") or {}
     history_state = states["sensors"].get("history") or {}
     vacuum_state = state_for(options.get("vacuum_entity", ""))
+    robot_states = collect_robot_states(options, vacuum_state)
     status_attrs = status_state.get("attributes", {}) if isinstance(status_state, dict) else {}
     history_attrs = history_state.get("attributes", {}) if isinstance(history_state, dict) else {}
     return {
@@ -520,12 +661,14 @@ def build_summary() -> dict:
             "learning_window": options.get("learning_window"),
         },
         "entities": entity_map,
-        "states": {**states, "vacuum": vacuum_state},
+        "states": {**states, "vacuum": vacuum_state, "robot": robot_states},
         "status": {
             "reason": status_attrs.get("reason"),
             "presence_summary": status_attrs.get("presence_summary", []),
             "cleaned_during_absence": status_attrs.get("cleaned_during_absence", []),
             "away_since": status_attrs.get("away_since"),
+            "travel_mode_active": status_attrs.get("travel_mode_active"),
+            "travel_mode_enabled": status_attrs.get("travel_mode_enabled"),
             "travel_mode_reason": status_attrs.get("travel_mode_reason"),
             "distance_km": status_attrs.get("distance_km"),
             "travel_pause_radius_km": status_attrs.get("travel_pause_radius_km"),
@@ -622,8 +765,46 @@ def format_last_cleaned(value: Any) -> str:
     text = str(value)
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        now = datetime.now(parsed.tzinfo) if parsed.tzinfo else datetime.now()
+        hours = max(0, round((now - parsed).total_seconds() / 3600))
+        if hours < 24:
+            return f"vor {hours} h"
+        return f"vor {round(hours / 24)} d"
     except ValueError:
         return text
+
+
+def parse_datetime(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    text = str(value).strip()
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def format_duration_hours(hours: float) -> str:
+    if hours <= 0:
+        return "jetzt"
+    if hours < 1:
+        return f"{max(1, round(hours * 60))} min"
+    if hours < 24:
+        rounded = round(hours, 1)
+        return f"{int(round(rounded))} h" if rounded.is_integer() else f"{rounded:.1f} h"
+    days = hours / 24
+    return f"{days:.1f} d" if days % 1 else f"{int(days)} d"
+
+
+def travel_reason_label(reason: Any) -> str:
+    reason_text = str(reason or "").lower()
+    if not reason_text:
+        return "Kein Pausengrund aktiv"
+    if "max" in reason_text or "distance" in reason_text or "entfernung" in reason_text:
+        return "Maximale Entfernung überschritten"
+    if "long" in reason_text or "pause" in reason_text or "radius" in reason_text:
+        return "Lange Abwesenheit außerhalb des Radius"
+    return str(reason)
 
     weekdays = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
     return f"{weekdays[parsed.weekday()]}, {parsed.strftime('%d.%m.%Y')}"
@@ -664,6 +845,259 @@ def localize_vacuum_state(value: str) -> str:
     return labels.get(value.lower(), value.title())
 
 
+def normalized_signal_state(state: Any) -> Optional[str]:
+    value = state_value(state, "")
+    if not value:
+        return None
+    return value.lower()
+
+
+def signal_attr(state: Any, key: str) -> Any:
+    return state_attrs(state).get(key)
+
+
+def first_number(*values: Any) -> Optional[float]:
+    for value in values:
+        number = number_value(value)
+        if number is not None:
+            return number
+    return None
+
+
+def value_from_signals(signals: dict, key: str) -> Optional[str]:
+    return normalized_signal_state(signals.get(key))
+
+
+def localize_status_value(value: str) -> str:
+    labels = {
+        "active": "Aktiv",
+        "adding_water": "Füllt Wasser",
+        "available": "Verfügbar",
+        "check": "Prüfen",
+        "charging": "Lädt",
+        "charging_completed": "Voll geladen",
+        "clean_add_water": "Wasser nachfüllen",
+        "cleaning": "Reinigt",
+        "disabled": "Aus",
+        "docked": "Angedockt",
+        "draining": "Entleert",
+        "draining_failed": "Entleerung fehlgeschlagen",
+        "draining_successful": "Entleert",
+        "drying": "Trocknet",
+        "error": "Fehler",
+        "idle": "Ruhig",
+        "installed": "OK",
+        "low_detergent": "Niedrig",
+        "low_water": "Niedrig",
+        "mop_in_station": "Mop in Station",
+        "mop_installed": "Mop eingesetzt",
+        "no_error": "OK",
+        "no_warning": "OK",
+        "no_water_for_clean": "Zu wenig Wasser",
+        "no_water_left": "Leer",
+        "no_water_left_after_clean": "Leer",
+        "not_available": "Nicht vorhanden",
+        "not_installed": "Fehlt",
+        "not_installed_or_full": "Fehlt oder voll",
+        "not_performed": "Nicht geleert",
+        "paused": "Pausiert",
+        "returning": "Kehrt zurück",
+        "returning_to_wash": "Zur Wäsche",
+        "tank_not_installed": "Tank fehlt",
+        "unavailable": "Nicht erreichbar",
+        "unknown": "Unbekannt",
+        "washing": "Wäscht Mop",
+    }
+    return labels.get(str(value).lower(), str(value).replace("_", " ").title())
+
+
+def status_class(value: str, warning_values: set[str] | None = None, error_values: set[str] | None = None) -> str:
+    normalized = str(value or "").lower()
+    if error_values and normalized in error_values:
+        return "error"
+    if warning_values and normalized in warning_values:
+        return "warning"
+    if normalized in {"unknown", "unavailable", "not_available"}:
+        return "unavailable"
+    return ""
+
+
+def hero_metric(icon: str, label: str, value: str, css_class: str = "", percent: Optional[float] = None) -> dict:
+    return {
+        "icon": icon,
+        "label": label,
+        "value": value,
+        "class": css_class,
+        "percent": None if percent is None else max(0, min(100, percent)),
+    }
+
+
+def render_hero_metric_rows(metrics: List[dict], empty_text: str) -> str:
+    if not metrics:
+        return f'<div class="hero-level-empty">{escape(empty_text)}</div>'
+
+    rows = []
+    for metric in metrics:
+        bar = ""
+        percent = metric.get("percent")
+        if percent is not None:
+            bar = (
+                '<div class="hero-level-bar">'
+                f'<div class="hero-level-fill {escape(metric.get("class", ""))}" style="width: {escape(format_number(percent, "%", "0%"))}"></div>'
+                "</div>"
+            )
+        rows.append(
+            f"""
+            <div class="hero-level-item">
+              <span class="hero-level-icon">{escape(metric.get("icon", ""))}</span>
+              <span class="hero-level-label">{escape(metric.get("label", ""))}</span>
+              {bar}
+              <span class="hero-level-value {escape(metric.get("class", ""))}">{escape(metric.get("value", ""))}</span>
+            </div>
+            """
+        )
+    return "".join(rows)
+
+
+def build_hero_metrics(summary: dict) -> tuple[List[dict], List[dict]]:
+    robot = summary.get("states", {}).get("robot", {}) or {}
+    signals = robot.get("signals", {}) or {}
+    vacuum = robot.get("vacuum") or summary.get("states", {}).get("vacuum") or {}
+    attrs = state_attrs(vacuum)
+
+    robot_metrics = []
+    station_metrics = []
+
+    battery = first_number(
+        attrs.get("battery_level"),
+        attrs.get("battery"),
+        state_value(signals.get("battery_level"), ""),
+    )
+    if battery is not None:
+        battery_class = "error" if battery < 20 else "warning" if battery < 40 else ""
+        charging = normalized_signal_state(signals.get("charging_state")) in {"on", "true"} or bool(
+            attrs.get("battery_charging") or attrs.get("charging")
+        )
+        battery_text = f"{int(battery)}% lädt" if charging else f"{int(battery)}%"
+        robot_metrics.append(hero_metric("⚡" if charging else "🔋", "Akku", battery_text, battery_class, battery))
+
+    error_state = value_from_signals(signals, "error")
+    error_attr = signal_attr(signals.get("error"), "value")
+    error_value = str(error_attr or error_state or attrs.get("error") or "").lower()
+
+    bin_full = bool(attrs.get("bin_full") or attrs.get("dustbin_full")) or error_value in {"bin_full", "box_full"}
+    bin_almost_full = bool(attrs.get("bin_almost_full"))
+    if bin_full or bin_almost_full or error_state in {"no_error", "unknown"} or "bin_full" in attrs or "dustbin_full" in attrs:
+        if bin_full:
+            robot_metrics.append(hero_metric("🗑️", "Staubbehälter", "Voll", "error"))
+        elif bin_almost_full:
+            robot_metrics.append(hero_metric("🗑️", "Staubbehälter", "Fast voll", "warning"))
+        else:
+            robot_metrics.append(hero_metric("🗑️", "Staubbehälter", "OK"))
+
+    water_state = value_from_signals(signals, "water_tank")
+    low_water_state = value_from_signals(signals, "low_water_warning")
+    water_empty = bool(attrs.get("water_tank_empty")) or error_value in {
+        "water_box_empty",
+        "water_tank_dry",
+        "onboard_water_tank_empty",
+    }
+    water_low = bool(attrs.get("water_tank_low")) or low_water_state in {"low_water", "no_water_for_clean"}
+    if water_state or low_water_state or water_empty or water_low or "water_tank_empty" in attrs:
+        if water_empty or low_water_state in {"no_water_left", "no_water_left_after_clean"}:
+            robot_metrics.append(hero_metric("💧", "Wassertank", "Leer", "error"))
+        elif water_low:
+            robot_metrics.append(hero_metric("💧", "Wassertank", localize_status_value(low_water_state or "low_water"), "warning"))
+        elif water_state in {"not_installed", "tank_not_installed"}:
+            robot_metrics.append(hero_metric("💧", "Wassertank", "Fehlt", "warning"))
+        else:
+            robot_metrics.append(hero_metric("💧", "Wassertank", localize_status_value(low_water_state or water_state or "installed")))
+
+    mop_state = value_from_signals(signals, "mop_pad")
+    if mop_state:
+        robot_metrics.append(hero_metric("🧽", "Mop", localize_status_value(mop_state), status_class(mop_state, {"unknown"})))
+    elif "mop_attached" in attrs:
+        robot_metrics.append(hero_metric("🧽", "Mop", "Eingesetzt" if attrs.get("mop_attached") else "Nicht eingesetzt"))
+
+    station_state = value_from_signals(signals, "self_wash_base_status")
+    if station_state and station_state not in {"unknown"}:
+        station_metrics.append(
+            hero_metric(
+                "🏠",
+                "Basis",
+                localize_status_value(station_state),
+                status_class(station_state, {"paused", "clean_add_water"}, {"error"}),
+            )
+        )
+
+    dust_bag_state = value_from_signals(signals, "dust_bag_status")
+    dust_bag_error = error_value == "dust_bag_full"
+    if dust_bag_state or dust_bag_error:
+        if dust_bag_error:
+            station_metrics.append(hero_metric("🗑️", "Staubbeutel", "Voll", "error"))
+        else:
+            station_metrics.append(
+                hero_metric(
+                    "🗑️",
+                    "Staubbeutel",
+                    localize_status_value(dust_bag_state),
+                    status_class(dust_bag_state, {"check"}, {"not_installed"}),
+                )
+            )
+
+    clean_water_state = value_from_signals(signals, "clean_water_tank_status")
+    if clean_water_state:
+        station_metrics.append(
+            hero_metric(
+                "💧",
+                "Frischwasser",
+                localize_status_value(clean_water_state),
+                status_class(clean_water_state, {"low_water"}, {"not_installed"}),
+            )
+        )
+
+    dirty_water_state = value_from_signals(signals, "dirty_water_tank_status")
+    if dirty_water_state:
+        station_metrics.append(
+            hero_metric(
+                "🚿",
+                "Abwasser",
+                localize_status_value(dirty_water_state),
+                status_class(dirty_water_state, {"not_installed_or_full"}),
+            )
+        )
+
+    detergent_state = value_from_signals(signals, "detergent_status")
+    if detergent_state:
+        station_metrics.append(
+            hero_metric(
+                "🫧",
+                "Reiniger",
+                localize_status_value(detergent_state),
+                status_class(detergent_state, {"low_detergent", "disabled"}),
+            )
+        )
+
+    drainage_state = value_from_signals(signals, "station_drainage_status") or value_from_signals(signals, "drainage_status")
+    if drainage_state and drainage_state not in {"idle", "unknown"}:
+        station_metrics.append(
+            hero_metric(
+                "↧",
+                "Entleerung",
+                localize_status_value(drainage_state),
+                status_class(drainage_state, {"draining"}, {"draining_failed"}),
+            )
+        )
+
+    dust_bag_drying_state = value_from_signals(signals, "dust_bag_drying_status")
+    if dust_bag_drying_state and dust_bag_drying_state not in {"idle", "unknown"}:
+        station_metrics.append(
+            hero_metric("♨", "Beuteltrocknung", localize_status_value(dust_bag_drying_state), status_class(dust_bag_drying_state, {"paused"}))
+        )
+
+    return robot_metrics, station_metrics
+
+
 def room_stats_for(summary: dict, room: dict) -> dict:
     for stats in summary.get("status", {}).get("room_stats", []) or []:
         if stats.get("room_key") == room.get("room_key") or stats.get("room") == room.get("room"):
@@ -672,9 +1106,20 @@ def room_stats_for(summary: dict, room: dict) -> dict:
 
 
 def render_presence_rows(summary: dict) -> str:
+    status = summary.get("status", {})
     people = summary.get("status", {}).get("presence_summary", []) or []
     if not people:
         return '<div class="empty">Keine Personen konfiguriert</div>'
+
+    radius = number_value(status.get("travel_pause_radius_km"), 0) or 0
+    travel_active = bool(status.get("travel_mode_active"))
+    after_hours = number_value(summary.get("options", {}).get("travel_pause_after_hours"), 0) or 0
+    away_since = parse_datetime(status.get("away_since"))
+    remaining_label = None
+    if away_since and after_hours > 0:
+        now = datetime.now(away_since.tzinfo) if away_since.tzinfo else datetime.now()
+        elapsed_hours = max(0, (now - away_since).total_seconds() / 3600)
+        remaining_label = format_duration_hours(max(0, after_hours - elapsed_hours))
 
     rows = []
     for person in people:
@@ -688,24 +1133,188 @@ def render_presence_rows(summary: dict) -> str:
             details.append(format_number(distance, " km"))
         if travel_time is not None:
             details.append(format_number(travel_time, " min"))
+        outside_radius = not home and radius > 0 and distance is not None and distance > radius
+        if outside_radius:
+            details = ["außerhalb Radius"]
+            if travel_active:
+                details.append("Reisemodus aktiv")
+            elif remaining_label:
+                details.append(f"aktiv in {remaining_label}")
         detail_text = " · ".join(details)
-        badge = "zuhause" if home else "weg"
-        badge_class = "home" if home else "away"
+        if home:
+            badge = "zuhause"
+            badge_class = "home"
+        elif outside_radius and travel_active:
+            badge = "reisend"
+            badge_class = "travel"
+        elif outside_radius:
+            badge = "außerhalb"
+            badge_class = "warning"
+        else:
+            badge = "abwesend"
+            badge_class = "away"
         rows.append(
             f"""
             <div class="person-row">
               <div class="person-info">
                 <div class="person-avatar">{escape(initials)}</div>
-                <span class="person-name">{escape(name)}</span>
+                <div class="person-copy">
+                  <span class="person-name">{escape(name)}</span>
+                  <span class="person-status">
+                    <span>{escape(detail_text)}</span>
+                  </span>
+                </div>
               </div>
-              <div class="person-status">
-                <span>{escape(detail_text)}</span>
-                <span class="pill {badge_class}">{escape(badge)}</span>
-              </div>
+              <span class="pill {badge_class}">{escape(badge)}</span>
             </div>
             """
         )
     return "".join(rows)
+
+
+def render_travel_guard(summary: dict) -> str:
+    status = summary.get("status", {})
+    people = status.get("presence_summary", []) or []
+    radius = number_value(status.get("travel_pause_radius_km"), 0) or 0
+    max_distance = number_value(status.get("max_distance_km"), 0) or 0
+    active = bool(status.get("travel_mode_active"))
+    enabled_value = status.get("travel_mode_enabled")
+    enabled = True if enabled_value is None else bool(enabled_value)
+    away_people = [person for person in people if not person_is_home(person)]
+    known_distances = [
+        person_distance(person)
+        for person in away_people
+        if person_distance(person) is not None
+    ]
+    outside_radius = [
+        person for person in away_people
+        if radius > 0 and (person_distance(person) or 0) > radius
+    ]
+    all_outside_radius = bool(people) and len(away_people) == len(people) and len(outside_radius) == len(people)
+
+    if not enabled:
+        state_class = "muted"
+        state_label = "Reiseschutz aus"
+        state_value_text = "Aus"
+    elif active:
+        state_class = "blocked"
+        state_label = "Reisemodus"
+        state_value_text = "Aktiv"
+    elif all_outside_radius:
+        after_hours = number_value(summary.get("options", {}).get("travel_pause_after_hours"), 0) or 0
+        away_since = parse_datetime(status.get("away_since"))
+        remaining_label = "-"
+        if away_since and after_hours > 0:
+            now = datetime.now(away_since.tzinfo) if away_since.tzinfo else datetime.now()
+            elapsed_hours = max(0, (now - away_since).total_seconds() / 3600)
+            remaining_label = format_duration_hours(max(0, after_hours - elapsed_hours))
+        state_class = "warning"
+        state_label = "Reisemodus"
+        state_value_text = f"in {remaining_label}"
+    elif people:
+        state_class = "clear"
+        state_label = "Reisemodus"
+        state_value_text = "Inaktiv"
+    else:
+        state_class = "muted"
+        state_label = "Keine Personen"
+        state_value_text = "Keine Daten"
+
+    max_parts = []
+    if known_distances:
+        max_parts.append(f"weiteste Person {format_number(max(known_distances), ' km')}")
+    if max_distance > 0:
+        max_parts.append(f"Limit {format_number(max_distance, ' km')}")
+    distance_detail = " · ".join(max_parts) if max_parts else "Keine Distanzdaten"
+    outside_detail = f"{len(outside_radius)}/{len(people)} draußen" if people else "-"
+    reason_detail = travel_reason_label(status.get("travel_mode_reason")) if active else outside_detail
+    after_hours = number_value(summary.get("options", {}).get("travel_pause_after_hours"), 0) or 0
+    duration_label = f"{int(after_hours)} h" if after_hours and after_hours.is_integer() else format_duration_hours(after_hours) if after_hours else "-"
+
+    return f"""
+      <div class="travel-guard {state_class}">
+        <div class="travel-guard-head">
+          <span class="travel-guard-label">{escape(state_label)}</span>
+          <strong>{escape(state_value_text)}</strong>
+        </div>
+        <div class="travel-guard-meta" aria-label="Reisemodus Details">
+          <span>{escape(reason_detail)}</span>
+          <span>Radius {escape(format_number(radius, " km"))}</span>
+          <span>nach {escape(duration_label)}</span>
+        </div>
+      </div>
+    """
+
+
+def render_history_card(summary: dict) -> str:
+    status = summary.get("status", {})
+    history = summary.get("history", {})
+    weekly = status.get("weekly_stats") or history.get("weekly_stats") or []
+    recent = status.get("recent_runs") or history.get("recent_runs") or []
+    room_stats = status.get("room_stats", []) or []
+    current_week = weekly[0] if weekly else {}
+
+    def run_row(item: dict) -> str:
+        return f"""
+          <div class="history-row">
+            <div>
+              <strong>{escape(item.get("room") or "-")}</strong>
+              <span>{escape(format_last_cleaned(item.get("finished_at") or item.get("started_at")))}</span>
+            </div>
+            <div class="history-row-meta">
+              <span>{escape(item.get("outcome") or "-")}</span>
+              <strong>{escape(format_number(item.get("actual_duration_min"), " min", "0 min"))}</strong>
+            </div>
+          </div>
+        """
+
+    def room_row(item: dict) -> str:
+        learned = item.get("learned_duration_min")
+        effective = item.get("effective_duration_min")
+        plan_value = effective if effective is not None else learned
+        runs = item.get("completed_runs") or 0
+        average_label = format_number(learned, " min", "unbekannt")
+        plan_label = format_number(plan_value, " min", "offen")
+        return f"""
+          <div class="history-room">
+            <div class="history-room-title">
+              <strong>{escape(item.get("room") or item.get("room_key") or "-")}</strong>
+              <span>{escape(runs)} Läufe</span>
+            </div>
+            <div class="history-room-metrics">
+              <span class="metric-chip">Ø {escape(average_label)}</span>
+              <span class="metric-chip">Plan {escape(plan_label)}</span>
+            </div>
+          </div>
+        """
+
+    recent_html = "".join(run_row(item) for item in recent[:5]) or '<div class="empty">Noch keine Läufe gespeichert.</div>'
+    room_html = "".join(room_row(item) for item in room_stats[:4]) or '<div class="empty">Noch keine Raumstatistiken verfügbar.</div>'
+
+    return f"""
+      <div class="history-summary">
+        <div>
+          <span>Diese Woche</span>
+          <strong>{escape(current_week.get("runs", 0))} Läufe</strong>
+        </div>
+        <div>
+          <span>Minuten</span>
+          <strong>{escape(current_week.get("minutes", 0))} min</strong>
+        </div>
+        <div>
+          <span>Einträge</span>
+          <strong>{escape(status.get("history_entries", 0))}</strong>
+        </div>
+      </div>
+      <div class="history-block">
+        <h3>Letzte Läufe</h3>
+        <div class="history-list">{recent_html}</div>
+      </div>
+      <div class="history-block">
+        <h3>Reinigungsdauer</h3>
+        <div class="history-room-grid">{room_html}</div>
+      </div>
+    """
 
 
 def render_room_row(summary: dict, room: dict, index: int, section_kind: str) -> str:
@@ -719,7 +1328,7 @@ def render_room_row(summary: dict, room: dict, index: int, section_kind: str) ->
     if not active_room and section_kind == "due" and fits:
         action_btn = f'<button class="room-btn primary" type="button" data-room-action="start" data-room-key="{escape(room_key)}">Starten</button>'
     elif section_kind == "later":
-        action_btn = f'<button class="room-btn" type="button" data-room-action="due" data-room-key="{escape(room_key)}">Vorziehen</button>'
+        action_btn = f'<button class="room-btn" type="button" data-room-action="due" data-room-key="{escape(room_key)}">Fällig machen</button>'
 
     # Build due tag based on last_cleaned + interval
     from datetime import datetime, timedelta
@@ -759,21 +1368,27 @@ def render_room_row(summary: dict, room: dict, index: int, section_kind: str) ->
 
     buttons_html = f'<div class="room-buttons">{action_btn}</div>' if action_btn else ''
 
+    # CSS classes for row styling
+    row_classes = ["room-row"]
+    if section_kind == "due" and index == 1:
+        row_classes.append("next")
+    elif fits:
+        row_classes.append("fits")
+
+    duration_min = number_value(room.get("effective_duration_min"), 0) or 0
     return f"""
-        <div class="room-row {'next' if index == 1 else ''}" draggable="true" data-room-key="{escape(room_key)}" data-room-section-kind="{escape(section_kind)}">
-          <div class="room-rank" aria-hidden="true">{index}</div>
+        <div class="{' '.join(row_classes)}" draggable="true" data-room-key="{escape(room_key)}" data-room-section-kind="{escape(section_kind)}" data-duration="{int(duration_min)}">
           <div class="room-info">
-            <div class="room-name">{escape(room.get("room", "Raum"))}</div>
+            <div class="room-header">
+              <span class="room-name"><span class="room-inline-rank" aria-hidden="true">{index}.</span>{escape(room.get("room", "Raum"))}</span>
+              <span class="room-duration">{escape(format_number(room.get("effective_duration_min"), " min"))}</span>
+            </div>
             <div class="room-tags">
               <span class="room-tag last"><span class="icon">✓</span> {escape(format_last_cleaned(stats.get("last_cleaned")))}</span>
               {due_tag}
               {interval_tag}
             </div>
             {buttons_html}
-          </div>
-          <div class="room-duration">
-            <strong>{escape(format_number(room.get("effective_duration_min"), " min"))}</strong>
-            <span>{'passt' if fits else 'zu lang'}</span>
           </div>
         </div>
         """
@@ -811,9 +1426,12 @@ def render_active_room_row(summary: dict) -> str:
         interval_tag = f'<span class="room-tag interval">alle {int(interval_days)} Tage</span>'
 
     return f"""
-      <div class="room-row next">
+      <div class="room-row next" data-duration="{int(remaining_value)}" data-room-section-kind="active">
         <div class="room-info">
-          <div class="room-name">{escape(active_room)}</div>
+          <div class="room-header">
+            <span class="room-name">{escape(active_room)}</span>
+            <span class="room-duration">{escape(planned)}</span>
+          </div>
           <div class="room-tags">
             <span class="room-tag last"><span class="icon">🧹</span> läuft gerade</span>
             {interval_tag}
@@ -827,9 +1445,6 @@ def render_active_room_row(summary: dict) -> str:
           <div class="room-buttons">
             <button class="room-btn danger" type="button" data-room-action="stop">Abbrechen</button>
           </div>
-        </div>
-        <div class="room-duration">
-          <strong>{escape(planned)}</strong>
         </div>
       </div>
     """
@@ -947,30 +1562,30 @@ def render_dashboard_html() -> str:
     active_attrs = state_attrs(states.get("active_room"))
     status_text = state_value(states.get("status"), "Bereit")
     is_cleaning = active_room.lower() not in {"", "-", "keine", "keiner", "none"}
+    remaining = number_value(active_attrs.get("remaining_min"), 0) or 0
 
-    if is_cleaning:
-        hero_title = f"Reinigt {active_room}"
-        hero_badge = "Reinigt"
-        hero_class = "active"
-        hero_icon_class = "cleaning"
-        hero_icon = "🧹"
-        progress_display = "flex"
-    else:
-        hero_title = "Bereit" if status_text.lower() == "ready" else status_text
-        hero_badge = status_text
-        hero_class = "idle"
-        hero_icon_class = "idle"
-        hero_icon = "🤖"
-        progress_display = "none"
+    # Count due rooms
+    queue = visible_room_queue(summary)
+    due_rooms = [
+        room for room in queue
+        if (number_value(room.get("forecast_score"), 0) or 0) >= 1
+        and bool(room.get("enabled", True))
+    ]
+    due_count = len(due_rooms)
+
+    # Determine presence state
+    people = status.get("presence_summary", []) or []
+    home_people = [person for person in people if person_is_home(person)]
+    anyone_home = len(home_people) > 0
+
+    # Hero card values will be computed after we have all the data
 
     planned = number_value(active_attrs.get("planned_duration_min"), 0) or 0
-    remaining = number_value(active_attrs.get("remaining_min"), 0) or 0
     progress = 0
     if planned > 0:
         progress = max(0, min(100, ((planned - remaining) / planned) * 100))
 
-    people = status.get("presence_summary", []) or []
-    home_people = [person for person in people if person_is_home(person)]
+    # people and home_people already calculated above for hero card
     presence_summary = f"{len(home_people)} zuhause" if home_people else "Niemand zuhause"
     presence_class = "blocked" if home_people else "clear"
     configured_return_buffer = number_value(
@@ -1002,23 +1617,69 @@ def render_dashboard_html() -> str:
     vacuum = summary.get("states", {}).get("vacuum") or {}
     vacuum_attrs = state_attrs(vacuum)
     vacuum_state = state_value(vacuum, "unbekannt")
-    battery = vacuum_attrs.get("battery_level") or vacuum_attrs.get("battery")
+    robot_signals = summary.get("states", {}).get("robot", {}).get("signals", {}) or {}
+    battery = first_number(
+        vacuum_attrs.get("battery_level"),
+        vacuum_attrs.get("battery"),
+        state_value(robot_signals.get("battery_level"), ""),
+    )
     battery_text = format_number(battery, "%", "")
     robot_summary = localize_vacuum_state(vacuum_state)
-    if battery_text:
-        robot_summary = f"{robot_summary} · {battery_text}"
+
+    # Hero card: Robot status header
+    hero_status_title = addon_name()
+    if is_cleaning:
+        hero_status_icon = "🧹"
+        hero_status_class = "cleaning"
+        hero_activity = f"Reinigt {active_room}"
+    else:
+        hero_status_icon = "🤖"
+        hero_status_class = "idle"
+        hero_activity = robot_summary
+    hero_status_sub = " · ".join(part for part in [hero_activity, battery_text] if part)
+
+    robot_metrics, station_metrics = build_hero_metrics(summary)
+
+    # Hero card: Settings toggles
+    global_states = summary.get("states", {}).get("global", {})
+
+    def is_on(entity_state):
+        return state_value(entity_state, "off").lower() in {"on", "true", "1"}
+
+    start_push_on = is_on(global_states.get("start_push"))
+    return_push_on = is_on(global_states.get("return_push"))
+    learning_on = is_on(global_states.get("learning"))
+    travel_on = is_on(global_states.get("travel_logic"))
+    return_guard_on = not home_people
+
+    hero_start_push_class = "on" if start_push_on else ""
+    hero_start_push_text = "Aktiv" if start_push_on else "Inaktiv"
+    hero_return_push_class = "on" if return_push_on else ""
+    hero_return_push_text = "Aktiv" if return_push_on else "Inaktiv"
+    hero_learning_class = "on" if learning_on else ""
+    hero_learning_text = "Aktiv" if learning_on else "Inaktiv"
+    hero_travel_class = "on" if travel_on else ""
+    hero_travel_text = "Aktiv" if travel_on else "Inaktiv"
+    hero_return_guard_class = "on" if return_guard_on else ""
+    hero_return_guard_text = "Aktiv" if return_guard_on else "Inaktiv"
 
     replacements = {
-        "hero_icon": hero_icon,
-        "hero_icon_class": hero_icon_class,
-        "hero_title": hero_title,
-        "hero_reason": status.get("reason") or "Wartet auf Startbedingungen",
-        "hero_badge": hero_badge,
-        "hero_badge_class": hero_class,
-        "progress_display": progress_display,
-        "progress_room": active_room or "Nächster Raum",
-        "progress_remaining": f"noch {format_number(remaining, ' min')}" if remaining else "",
-        "progress_width": f"{progress:.0f}%",
+        "hero_status_icon": hero_status_icon,
+        "hero_status_class": hero_status_class,
+        "hero_status_title": hero_status_title,
+        "hero_status_sub": hero_status_sub,
+        "hero_robot_items": render_hero_metric_rows(robot_metrics, "Keine Robotersensoren verfügbar"),
+        "hero_station_items": render_hero_metric_rows(station_metrics, "Keine Stationssensoren verfügbar"),
+        "hero_start_push_class": hero_start_push_class,
+        "hero_start_push_text": hero_start_push_text,
+        "hero_return_push_class": hero_return_push_class,
+        "hero_return_push_text": hero_return_push_text,
+        "hero_learning_class": hero_learning_class,
+        "hero_learning_text": hero_learning_text,
+        "hero_travel_class": hero_travel_class,
+        "hero_travel_text": hero_travel_text,
+        "hero_return_guard_class": hero_return_guard_class,
+        "hero_return_guard_text": hero_return_guard_text,
         "robot_summary": robot_summary,
         "robot_alerts": render_robot_alerts(summary),
         "presence_summary": presence_summary,
@@ -1026,10 +1687,13 @@ def render_dashboard_html() -> str:
         "travel_metric_class": travel_metric_class,
         "window_metric_class": window_metric_class,
         "presence_rows": render_presence_rows(summary),
+        "travel_guard": render_travel_guard(summary),
         "travel_time": format_number(closest_travel_time, " min"),
         "return_buffer": format_number(buffer_min, " min"),
         "return_window": format_number(return_window, " min"),
+        "return_window_min": str(int(return_window)),
         "room_sections": render_room_sections(summary),
+        "history_card": render_history_card(summary),
     }
 
     output = load_dashboard_template()

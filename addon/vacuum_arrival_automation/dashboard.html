@@ -52,142 +52,183 @@
       border-radius: var(--radius);
       box-shadow: var(--shadow);
     }
+    /* Hero card - Robot status & settings */
     .hero-card {
-      padding: 20px;
-      display: grid;
-      gap: 16px;
-    }
-    .hero-main {
+      padding: 16px;
       display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 16px;
+      flex-direction: column;
+      gap: 14px;
     }
-    .hero-status {
+    .hero-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .hero-robot {
       display: flex;
       align-items: center;
       gap: 12px;
-      min-width: 0;
-    }
-    .status-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 12px;
-      display: grid;
-      place-items: center;
-      font-size: 24px;
-      flex: 0 0 auto;
-    }
-    .status-icon.cleaning { background: var(--accent-soft); }
-    .status-icon.idle { background: var(--panel-soft); }
-    .status-icon.error { background: var(--danger-soft); }
-    .hero-text { min-width: 0; }
-    .hero-text h1 {
-      margin: 0;
-      font-size: 23px;
-      line-height: 1.15;
-      font-weight: 700;
-    }
-    .hero-text p {
-      margin: 4px 0 0;
-      color: var(--muted);
-      font-size: 14px;
-    }
-    .hero-badge {
-      padding: 6px 12px;
-      border-radius: 20px;
-      font-size: 13px;
-      font-weight: 650;
-      white-space: nowrap;
-    }
-    .hero-badge.active {
-      background: var(--accent);
-      color: white;
-    }
-    .hero-badge.idle {
-      background: var(--panel-soft);
-      color: var(--muted);
-    }
-    .hero-progress {
-      background: var(--panel-soft);
-      border-radius: var(--radius);
-      padding: 12px 16px;
-      align-items: center;
-      gap: 16px;
-    }
-    .progress-info {
       flex: 1;
       min-width: 0;
     }
-    .progress-info strong {
-      display: block;
+    .hero-robot-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+    .hero-robot-icon.idle { background: var(--panel-soft); }
+    .hero-robot-icon.cleaning { background: var(--accent-soft); }
+    .hero-robot-icon.error { background: var(--danger-soft); }
+    .hero-robot-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .hero-robot-title {
       font-size: 15px;
-      margin-bottom: 2px;
+      font-weight: 700;
+      color: var(--ink);
     }
-    .progress-info span {
+    .hero-robot-sub {
+      font-size: 12px;
       color: var(--muted);
-      font-size: 13px;
     }
-    .progress-bar {
-      width: 140px;
+    .hero-settings-btn {
+      width: 32px;
+      height: 32px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+    .hero-settings-btn:hover {
+      background: var(--panel-soft);
+    }
+    /* Levels section - Robot & Station side by side */
+    .hero-levels {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .hero-level-group {
+      padding: 12px;
+      background: var(--panel-soft);
+      border-radius: 8px;
+    }
+    .hero-level-title {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 10px;
+    }
+    .hero-level-items {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .hero-level-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .hero-level-icon {
+      font-size: 14px;
+      width: 20px;
+      text-align: center;
+    }
+    .hero-level-label {
+      flex: 1;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .hero-level-value {
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--ink);
+      text-align: right;
+    }
+    .hero-level-value.warning { color: var(--warning); }
+    .hero-level-value.error { color: var(--danger); }
+    .hero-level-value.unavailable { color: var(--muted); }
+    .hero-level-bar {
+      width: 50px;
       height: 6px;
       background: var(--line);
       border-radius: 3px;
       overflow: hidden;
     }
-    .progress-bar > span {
-      display: block;
+    .hero-level-fill {
       height: 100%;
-      background: var(--accent);
       border-radius: 3px;
+      background: var(--accent);
     }
-    .robot-compact {
-      padding: 12px 16px;
+    .hero-level-fill.warning { background: var(--warning); }
+    .hero-level-fill.error { background: var(--danger); }
+    .hero-level-empty {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    /* Settings chips */
+    .hero-settings-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .hero-setting-chip {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 8px;
+      min-width: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
     }
-    .robot-summary {
-      display: flex;
-      align-items: center;
-      gap: 10px;
+    .hero-setting-label {
       min-width: 0;
       color: var(--muted);
-      font-size: 14px;
-      font-weight: 600;
-    }
-    .robot-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      background: var(--accent);
-      box-shadow: 0 0 0 4px var(--accent-soft);
-      flex: 0 0 auto;
-    }
-    .robot-alerts {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      gap: 6px;
-    }
-    .robot-alert {
-      padding: 4px 8px;
-      border-radius: 6px;
       font-size: 12px;
       font-weight: 650;
-      white-space: nowrap;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
     }
-    .robot-alert.warning {
-      background: var(--warning-soft);
-      color: var(--warning);
+    .hero-setting-status {
+      flex: 0 0 auto;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      line-height: 1.4;
     }
-    .robot-alert.error {
-      background: var(--danger-soft);
-      color: var(--danger);
+    .hero-setting-chip.on {
+      background: var(--accent-soft);
+      border-color: rgba(34, 122, 85, 0.22);
+    }
+    .hero-setting-chip.on .hero-setting-label {
+      color: var(--accent-strong);
+    }
+    .hero-setting-chip.on .hero-setting-status {
+      background: rgba(34, 122, 85, 0.24);
+      color: var(--accent-strong);
     }
     .presence-card,
-    .queue-card {
+    .queue-card,
+    .history-card {
       padding: 16px;
     }
     .section-header {
@@ -272,6 +313,89 @@
       display: grid;
       gap: 8px;
     }
+    .presence-list {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel-soft);
+    }
+    .presence-list-title {
+      margin: 12px 0 6px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .travel-guard {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-soft);
+    }
+    .travel-guard.clear {
+      background: var(--accent-soft);
+      border-color: rgba(34, 122, 85, 0.18);
+    }
+    .travel-guard.warning {
+      background: var(--warning-soft);
+      border-color: rgba(167, 101, 34, 0.2);
+    }
+    .travel-guard.blocked {
+      background: var(--danger-soft);
+      border-color: rgba(178, 76, 61, 0.22);
+    }
+    .travel-guard-head {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+      flex: 0 0 auto;
+    }
+    .travel-guard-label {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .travel-guard-head strong {
+      color: var(--ink);
+      font-size: 16px;
+      line-height: 1.25;
+    }
+    .travel-guard.blocked .travel-guard-head strong {
+      color: var(--danger);
+    }
+    .travel-guard.warning .travel-guard-head strong {
+      color: var(--warning);
+    }
+    .travel-guard.clear .travel-guard-head strong {
+      color: var(--accent-strong);
+    }
+    .travel-guard-meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .travel-guard-meta span {
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
     .person-row,
     .room-row {
       display: flex;
@@ -282,22 +406,40 @@
       background: var(--panel-soft);
       border-radius: 8px;
     }
+    .person-row {
+      border-radius: 0;
+      background: transparent;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 58px;
+    }
+    .person-row + .person-row {
+      border-top: 1px solid var(--line);
+    }
     .person-info {
       display: flex;
       align-items: center;
       gap: 10px;
       min-width: 0;
+      flex: 1 1 auto;
     }
     .person-avatar {
-      width: 32px;
-      height: 32px;
+      width: 28px;
+      height: 28px;
       border-radius: 50%;
       background: var(--line);
       display: grid;
       place-items: center;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       flex: 0 0 auto;
+    }
+    .person-copy {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex-wrap: wrap;
     }
     .person-name {
       font-weight: 650;
@@ -307,10 +449,11 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 13px;
+      font-size: 12px;
       color: var(--muted);
-      text-align: right;
-      flex: 0 0 auto;
+      text-align: left;
+      flex: 0 1 auto;
+      flex-wrap: wrap;
     }
     .pill {
       display: inline-block;
@@ -318,9 +461,15 @@
       border-radius: 4px;
       font-size: 12px;
       font-weight: 650;
+      flex: 0 0 auto;
     }
     .pill.home { background: var(--danger-soft); color: var(--danger); }
     .pill.away { background: var(--accent-soft); color: var(--accent-strong); }
+    .pill.warning,
+    .pill.travel {
+      background: var(--warning-soft);
+      color: var(--warning);
+    }
     .room-row {
       padding: 12px;
       gap: 10px;
@@ -367,30 +516,38 @@
       background: var(--accent-soft);
       border: 1px solid rgba(34, 122, 85, 0.2);
     }
-    .room-rank {
-      width: 24px;
-      height: 24px;
-      border-radius: 6px;
-      background: var(--panel);
-      display: grid;
-      place-items: center;
-      font-size: 12px;
-      font-weight: 750;
-      color: var(--muted);
-      flex: 0 0 auto;
-    }
-    .room-row.next .room-rank {
-      background: var(--accent);
-      color: white;
+    .room-row.fits {
+      background: var(--accent-soft);
+      border: 1px solid rgba(34, 122, 85, 0.15);
     }
     .room-info {
       flex: 1;
       min-width: 0;
     }
+    .room-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
     .room-name {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
       font-weight: 650;
       font-size: 14px;
-      margin-bottom: 4px;
+    }
+    .room-inline-rank {
+      color: var(--accent-strong);
+      font-weight: 800;
+      min-width: 18px;
+    }
+    .room-duration {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 600;
+      flex-shrink: 0;
     }
     .room-buttons {
       display: grid;
@@ -513,18 +670,7 @@
       white-space: nowrap;
       flex: 0 0 auto;
     }
-    .room-duration {
-      text-align: right;
-      flex: 0 0 auto;
-    }
-    .room-duration strong {
-      display: block;
-      font-size: 14px;
-    }
-    .room-duration span {
-      font-size: 11px;
-      color: var(--muted);
-    }
+    /* room-duration styles moved to .room-header */
     .empty {
       color: var(--muted);
       font-size: 14px;
@@ -545,6 +691,119 @@
       border-radius: 8px;
       margin-bottom: 8px;
     }
+    .history-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .history-summary > div {
+      min-width: 0;
+      padding: 10px;
+      border-radius: 8px;
+      background: var(--panel-soft);
+    }
+    .history-summary span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+      margin-bottom: 3px;
+    }
+    .history-summary strong {
+      display: block;
+      color: var(--ink);
+      font-size: 16px;
+      line-height: 1.2;
+    }
+    .history-block {
+      display: grid;
+      gap: 8px;
+    }
+    .history-block + .history-block {
+      margin-top: 14px;
+    }
+    .history-block h3 {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .history-note {
+      margin: -4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .history-list,
+    .history-room-grid {
+      display: grid;
+      gap: 8px;
+    }
+    .history-row,
+    .history-room {
+      display: grid;
+      gap: 4px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--panel-soft);
+    }
+    .history-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+    }
+    .history-row strong,
+    .history-room strong {
+      color: var(--ink);
+      font-size: 13px;
+    }
+    .history-row span,
+    .history-room span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .history-row > div:first-child {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .history-row-meta {
+      display: grid;
+      gap: 2px;
+      text-align: right;
+    }
+    .history-room {
+      grid-template-columns: minmax(100px, 1fr) auto;
+      align-items: center;
+      column-gap: 10px;
+    }
+    .history-room-title {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .history-room-metrics {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .metric-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
     @media (max-width: 900px) {
       .dashboard-grid {
         grid-template-columns: 1fr;
@@ -558,21 +817,95 @@
         flex-direction: column;
       }
       .presence-overview {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+      }
+      .presence-metric {
+        padding: 8px;
+        border-radius: 7px;
+      }
+      .presence-metric span {
+        font-size: 10px;
+        line-height: 1.15;
+        overflow-wrap: anywhere;
+      }
+      .presence-metric strong {
+        font-size: 17px;
+      }
+      .travel-guard {
+        align-items: center;
+        padding: 8px 10px;
+      }
+      .travel-guard-head strong {
+        font-size: 15px;
+      }
+      .travel-guard-meta {
+        gap: 4px;
+      }
+      .travel-guard-meta span {
+        padding: 4px 8px;
+        font-size: 11px;
+      }
+      .hero-settings-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+      .hero-setting-chip {
+        padding: 7px 8px;
+        border-radius: 7px;
+      }
+      .hero-setting-label {
+        font-size: 11px;
+      }
+      .hero-setting-status {
+        padding: 2px 5px;
+        font-size: 9px;
+      }
+      .history-summary {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+      }
+      .history-summary > div {
+        padding: 8px;
+      }
+      .history-summary span {
+        font-size: 10px;
+      }
+      .history-summary strong {
+        font-size: 15px;
+      }
+      .history-room {
+        grid-template-columns: minmax(88px, 1fr) auto;
+      }
+      .history-room-metrics {
+        gap: 8px;
       }
       .robot-alerts {
         justify-content: flex-start;
       }
       .person-row {
-        align-items: flex-start;
-        flex-direction: column;
+        align-items: center;
+        min-height: 0;
+        height: 54px;
+        padding: 8px 10px;
       }
       .room-row {
         align-items: flex-start;
       }
+      .person-avatar {
+        width: 26px;
+        height: 26px;
+        font-size: 11px;
+      }
+      .person-copy {
+        gap: 6px;
+      }
+      .person-name {
+        font-size: 13px;
+      }
       .person-status {
-        text-align: left;
-        flex-wrap: wrap;
+        gap: 6px;
+        font-size: 12px;
       }
       .progress-bar {
         width: 100%;
@@ -584,34 +917,55 @@
   <main class="shell">
     <div class="dashboard-grid">
       <div class="dashboard-left">
-        <section class="card hero-card" aria-label="Staubsaugerstatus">
-          <div class="hero-main">
-            <div class="hero-status">
-              <div class="status-icon {{hero_icon_class}}">{{hero_icon}}</div>
-              <div class="hero-text">
-                <h1>{{hero_title}}</h1>
-                <p>{{hero_reason}}</p>
+        <section class="card hero-card" aria-label="Staubsauger">
+          <div class="hero-header">
+            <div class="hero-robot">
+              <span class="hero-robot-icon {{{hero_status_class}}}">{{{hero_status_icon}}}</span>
+              <div class="hero-robot-info">
+                <span class="hero-robot-title">{{{hero_status_title}}}</span>
+                <span class="hero-robot-sub">{{{hero_status_sub}}}</span>
               </div>
             </div>
-            <div class="hero-badge {{hero_badge_class}}">{{hero_badge}}</div>
+            <button class="hero-settings-btn" type="button" aria-label="Einstellungen">⚙️</button>
           </div>
-          <div class="hero-progress" style="display: {{progress_display}}">
-            <div class="progress-info">
-              <strong>{{progress_room}}</strong>
-              <span>{{progress_remaining}}</span>
-            </div>
-            <div class="progress-bar" aria-hidden="true">
-              <span style="width: {{progress_width}}"></span>
-            </div>
-          </div>
-        </section>
 
-        <section class="card robot-compact" aria-label="Roboterzustand">
-          <div class="robot-summary">
-            <span class="robot-dot" aria-hidden="true"></span>
-            <span>{{robot_summary}}</span>
+          <div class="hero-levels">
+            <div class="hero-level-group">
+              <div class="hero-level-title">Roboter</div>
+              <div class="hero-level-items">
+                {{{hero_robot_items}}}
+              </div>
+            </div>
+            <div class="hero-level-group">
+              <div class="hero-level-title">Station</div>
+              <div class="hero-level-items">
+                {{{hero_station_items}}}
+              </div>
+            </div>
           </div>
-          <div class="robot-alerts">{{{robot_alerts}}}</div>
+
+          <div class="hero-settings-list">
+            <div class="hero-setting-chip {{{hero_start_push_class}}}" aria-label="Start-Push {{{hero_start_push_text}}}" title="Start-Push {{{hero_start_push_text}}}">
+              <span class="hero-setting-label">Start-Push</span>
+              <span class="hero-setting-status">{{{hero_start_push_text}}}</span>
+            </div>
+            <div class="hero-setting-chip {{{hero_return_push_class}}}" aria-label="Rückkehr-Push {{{hero_return_push_text}}}" title="Rückkehr-Push {{{hero_return_push_text}}}">
+              <span class="hero-setting-label">Rückkehr-Push</span>
+              <span class="hero-setting-status">{{{hero_return_push_text}}}</span>
+            </div>
+            <div class="hero-setting-chip {{{hero_learning_class}}}" aria-label="Lernmodus {{{hero_learning_text}}}" title="Lernmodus {{{hero_learning_text}}}">
+              <span class="hero-setting-label">Lernmodus</span>
+              <span class="hero-setting-status">{{{hero_learning_text}}}</span>
+            </div>
+            <div class="hero-setting-chip {{{hero_travel_class}}}" aria-label="Reiselogik {{{hero_travel_text}}}" title="Reiselogik {{{hero_travel_text}}}">
+              <span class="hero-setting-label">Reiselogik</span>
+              <span class="hero-setting-status">{{{hero_travel_text}}}</span>
+            </div>
+            <div class="hero-setting-chip {{{hero_return_guard_class}}}" aria-label="Rückkehrschutz {{{hero_return_guard_text}}}" title="Rückkehrschutz {{{hero_return_guard_text}}}">
+              <span class="hero-setting-label">Rückkehrschutz</span>
+              <span class="hero-setting-status">{{{hero_return_guard_text}}}</span>
+            </div>
+          </div>
         </section>
 
         <section class="card presence-card" aria-label="Anwesenheit">
@@ -633,6 +987,8 @@
               <strong>{{return_buffer}}</strong>
             </div>
           </div>
+          {{{travel_guard}}}
+          <div class="presence-list-title">Bewohner</div>
           <div class="presence-list">
             {{{presence_rows}}}
           </div>
@@ -644,10 +1000,16 @@
           <div class="section-header">
             <h2>Reinigungsplan</h2>
           </div>
-          <div class="room-list" data-room-list>
+          <div class="room-list" data-room-list data-return-window="{{return_window_min}}">
             {{{room_sections}}}
           </div>
           <p class="override-note">Räume innerhalb eines Abschnitts ziehen, um sie einmalig vorzuziehen. Zwischen den Abschnitten ziehen, um den Status zu überschreiben.</p>
+        </section>
+        <section class="card history-card" aria-label="Historie">
+          <div class="section-header">
+            <h2>Historie</h2>
+          </div>
+          {{{history_card}}}
         </section>
       </div>
     </div>
@@ -684,8 +1046,10 @@
       }
 
       function updateRanks() {
+        const activeSection = list.querySelector('.room-section[data-room-section-kind="active"]');
         const dueSection = list.querySelector('.room-section[data-room-section-kind="due"]');
         const laterSection = list.querySelector('.room-section[data-room-section-kind="later"]');
+        const returnWindow = parseInt(list.dataset.returnWindow, 10) || 0;
 
         function collectRows(startElement, endElement) {
           const rows = [];
@@ -703,24 +1067,43 @@
           return rows;
         }
 
+        // Sammle aktiven Raum (zwischen active und due section)
+        const activeRows = collectRows(activeSection, dueSection);
+
         // Sammle due-Räume (zwischen due und later section)
         const dueRows = collectRows(dueSection, laterSection);
 
         // Sammle later-Räume (nach later section bis zum Ende)
         const laterRows = collectRows(laterSection, null);
 
+        // Kumulative Dauer berechnen (startet mit aktivem Raum)
+        let cumulativeDuration = 0;
+        activeRows.forEach((row) => {
+          cumulativeDuration += parseInt(row.dataset.duration, 10) || 0;
+        });
+
+        // fits-Klasse für due und later Räume setzen
+        const allQueuedRows = [...dueRows, ...laterRows];
+        allQueuedRows.forEach((row) => {
+          const duration = parseInt(row.dataset.duration, 10) || 0;
+          cumulativeDuration += duration;
+          const fits = cumulativeDuration <= returnWindow;
+          row.classList.toggle("fits", fits && !row.classList.contains("next"));
+        });
+
         // Ränge für due-Räume (1, 2, 3, ...)
         dueRows.forEach((row, index) => {
-          const rank = row.querySelector(".room-rank");
-          if (rank) rank.textContent = String(index + 1);
+          const rank = row.querySelector(".room-inline-rank");
+          if (rank) rank.textContent = `${index + 1}.`;
           row.classList.toggle("next", index === 0);
+          if (index === 0) row.classList.remove("fits");
         });
 
         // Ränge für later-Räume (fortlaufend nach due)
         const laterStartIndex = dueRows.length;
         laterRows.forEach((row, index) => {
-          const rank = row.querySelector(".room-rank");
-          if (rank) rank.textContent = String(laterStartIndex + index + 1);
+          const rank = row.querySelector(".room-inline-rank");
+          if (rank) rank.textContent = `${laterStartIndex + index + 1}.`;
           row.classList.remove("next");
         });
       }
