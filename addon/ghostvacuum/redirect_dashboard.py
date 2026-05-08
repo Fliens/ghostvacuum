@@ -276,13 +276,27 @@ def state_for(entity_id: str):
         return None
 
 
+_all_states_cache: dict = {"states": None, "timestamp": 0}
+_ALL_STATES_CACHE_TTL = 2.0  # seconds
+
+
 def all_states():
     if local_dev_enabled():
         return list(mock_states().values())
 
+    import time
+    now = time.time()
+
+    # Return cached states if still fresh
+    if _all_states_cache["states"] is not None and (now - _all_states_cache["timestamp"]) < _ALL_STATES_CACHE_TTL:
+        return _all_states_cache["states"]
+
     try:
         states = api_request("/states")
-        return states if isinstance(states, list) else []
+        result = states if isinstance(states, list) else []
+        _all_states_cache["states"] = result
+        _all_states_cache["timestamp"] = now
+        return result
     except Exception:
         return []
 
@@ -2777,6 +2791,7 @@ def render_settings_system(summary: dict) -> str:
 def render_settings_html() -> str:
     summary = build_summary()
     replacements = {
+        "missing_helpers_banner": render_missing_helpers_banner(summary),
         "settings_toggles": render_settings_toggles(summary),
         "settings_travel_toggle": render_settings_travel_toggle(summary),
         "settings_schedule": render_settings_schedule(summary),
