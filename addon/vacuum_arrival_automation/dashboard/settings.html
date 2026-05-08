@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vacuum Automation Einstellungen</title>
-  <link rel="stylesheet" href="/static/leaflet.css">
+  <link rel="stylesheet" href="static/leaflet.css">
   <style>
     :root {
       --bg: #f4f6f5;
@@ -835,7 +835,7 @@
         <h1>Einstellungen</h1>
         <span>Automation, Rückkehrlogik, Räume und Systemstatus</span>
       </div>
-      <a class="back-button" href="/" aria-label="Zurück zum Dashboard" title="Zurück zum Dashboard">←</a>
+      <a class="back-button" href="." aria-label="Zurück zum Dashboard" title="Zurück zum Dashboard">←</a>
     </header>
 
     <nav class="tabs" aria-label="Einstellungsbereiche">
@@ -931,8 +931,14 @@
 
   <div class="toast" data-toast role="status" aria-live="polite"></div>
 
-  <script src="/static/leaflet.js"></script>
+  <script src="static/leaflet.js"></script>
   <script>
+    // Compute base path for Ingress compatibility
+    const basePath = window.location.pathname.replace(/\/settings$/, "").replace(/\/$/, "") || "";
+    function apiUrl(endpoint) {
+      return basePath + endpoint;
+    }
+
     const toast = document.querySelector("[data-toast]");
     let toastTimer = null;
     let refreshHomeMap = () => {};
@@ -945,7 +951,7 @@
     }
 
     async function postJson(path, payload = null) {
-      const response = await fetch(path, {
+      const response = await fetch(apiUrl(path), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: payload === null ? null : JSON.stringify(payload)

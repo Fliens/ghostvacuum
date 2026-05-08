@@ -1,4 +1,10 @@
 (function () {
+  // Compute base path for Ingress compatibility (removes trailing /settings etc.)
+  const basePath = window.location.pathname.replace(/\/settings$/, "").replace(/\/$/, "") || "";
+  function apiUrl(endpoint) {
+    return basePath + endpoint;
+  }
+
   const list = document.querySelector("[data-room-list]");
   if (list) {
     let dragged = null;
@@ -9,7 +15,7 @@
     placeholder.className = "room-placeholder";
 
     async function postJson(path, payload) {
-      const response = await fetch(path, {
+      const response = await fetch(apiUrl(path), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -496,7 +502,7 @@
 
     async function refresh() {
       try {
-        const resp = await fetch("/api/summary", { headers: { Accept: "application/json" } });
+        const resp = await fetch(apiUrl("/api/summary"), { headers: { Accept: "application/json" } });
         if (!resp.ok) return;
         applyContext(deriveContext(await resp.json()));
       } catch (e) {
