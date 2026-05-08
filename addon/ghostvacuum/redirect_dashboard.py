@@ -967,6 +967,7 @@ def build_summary() -> dict:
             "recent_runs": status_attrs.get("recent_runs", []),
             "weekly_stats": status_attrs.get("weekly_stats", []),
             "history_entries": status_attrs.get("history_entries", 0),
+            "missing_helpers": status_attrs.get("missing_helpers", []),
         },
         "history": {
             "weekly_stats": history_attrs.get("weekly_stats", []),
@@ -2064,6 +2065,33 @@ def render_state_machine(summary: dict) -> str:
     )
 
 
+def render_missing_helpers_banner(summary: dict) -> str:
+    """Render a warning banner if helper entities are missing."""
+    missing = summary.get("status", {}).get("missing_helpers", [])
+    if not missing:
+        return ""
+
+    count = len(missing)
+    helper_list = ", ".join(missing[:5])
+    if count > 5:
+        helper_list += f" ... und {count - 5} weitere"
+
+    return (
+        '<div class="missing-helpers-banner">'
+        '<div class="missing-helpers-content">'
+        '<span class="missing-helpers-icon">⚠️</span>'
+        '<div class="missing-helpers-text">'
+        f'<strong>{count} Helper-Entities fehlen</strong>'
+        f'<span class="missing-helpers-list">{html.escape(helper_list)}</span>'
+        '</div>'
+        '<button class="missing-helpers-repair-btn" data-action="repair-helpers">'
+        'Reparieren'
+        '</button>'
+        '</div>'
+        '</div>'
+    )
+
+
 def render_dashboard_html() -> str:
     summary = build_summary()
     states = summary.get("states", {}).get("sensors", {})
@@ -2206,6 +2234,7 @@ def render_dashboard_html() -> str:
         "state_machine": render_state_machine(summary),
         "room_sections": render_room_sections(summary),
         "history_card": render_history_card(summary),
+        "missing_helpers_banner": render_missing_helpers_banner(summary),
     }
 
     output = load_dashboard_template()

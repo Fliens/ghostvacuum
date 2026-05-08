@@ -513,4 +513,50 @@
     refresh();
     setInterval(refresh, 3000);
   })();
+
+  // Repair helpers button handler
+  document.addEventListener("click", async function (e) {
+    const btn = e.target.closest("[data-action='repair-helpers']");
+    if (!btn) return;
+
+    btn.disabled = true;
+    btn.classList.add("loading");
+    const originalText = btn.textContent;
+    btn.textContent = "Repariere";
+
+    try {
+      const resp = await fetch(apiUrl("/api/recreate_helpers"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const result = await resp.json();
+
+      if (result.ok) {
+        btn.textContent = "Erledigt!";
+        btn.style.background = "var(--accent)";
+        // Refresh page after short delay to show updated state
+        setTimeout(() => window.location.reload(), 1500);
+      } else {
+        btn.textContent = "Fehler";
+        btn.style.background = "var(--danger)";
+        console.error("Helper repair failed:", result);
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.style.background = "";
+          btn.disabled = false;
+          btn.classList.remove("loading");
+        }, 3000);
+      }
+    } catch (err) {
+      console.error("Helper repair error:", err);
+      btn.textContent = "Fehler";
+      btn.style.background = "var(--danger)";
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.style.background = "";
+        btn.disabled = false;
+        btn.classList.remove("loading");
+      }, 3000);
+    }
+  });
 })();

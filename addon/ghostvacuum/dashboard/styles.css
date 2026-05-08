@@ -1153,3 +1153,67 @@
         width: 100%;
       }
     }
+
+    /* Missing Helpers Banner */
+    .missing-helpers-banner {
+      background: var(--warning-soft);
+      border: 1px solid var(--warning);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      margin-bottom: 16px;
+    }
+    .missing-helpers-content {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .missing-helpers-icon {
+      font-size: 24px;
+      flex-shrink: 0;
+    }
+    .missing-helpers-text {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .missing-helpers-text strong {
+      color: var(--warning);
+      font-size: 14px;
+    }
+    .missing-helpers-list {
+      color: var(--muted);
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .missing-helpers-repair-btn {
+      background: var(--warning);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .missing-helpers-repair-btn:hover {
+      background: #8a5319;
+    }
+    .missing-helpers-repair-btn:disabled {
+      background: var(--muted);
+      cursor: not-allowed;
+    }
+    .missing-helpers-repair-btn.loading::after {
+      content: "...";
+    }
+    @media (max-width: 600px) {
+      .missing-helpers-content {
+        flex-wrap: wrap;
+      }
+      .missing-helpers-repair-btn {
+        width: 100%;
+        margin-top: 8px;
+      }
+    }

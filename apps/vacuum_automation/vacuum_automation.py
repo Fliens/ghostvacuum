@@ -466,7 +466,7 @@ class VacuumAutomation(hass.Hass):
         ]
 
     def _check_helper_entities(self, kwargs=None):
-        """Check if all required helper entities exist and trigger recreation if needed."""
+        """Check if all required helper entities exist and update missing_helpers list."""
         all_helpers = (
             [self.state_helper, self.one_time_room_override_entity, self.enabled_entity]
             + self._list_runtime_helper_entities()
@@ -484,30 +484,9 @@ class VacuumAutomation(hass.Hass):
         if missing and missing != self.missing_helpers:
             self.log(f"Missing helper entities detected: {missing}")
             self.missing_helpers = missing
-            # Fire an event that the dashboard can listen to
-            self.fire_event(
-                "vacuum_automation_helpers_missing",
-                missing=missing,
-            )
-            # Attempt to recreate via helper_setup script (if available)
-            self._trigger_helper_recreation()
         elif not missing and self.missing_helpers:
             self.log("All helper entities restored")
             self.missing_helpers = []
-            self.fire_event("vacuum_automation_helpers_restored")
-
-    def _trigger_helper_recreation(self):
-        """Trigger the helper_setup script to recreate missing helpers."""
-        try:
-            # Call the helper setup service if available
-            # This fires an event that the add-on dashboard can handle
-            self.fire_event(
-                "vacuum_automation_recreate_helpers",
-                missing=self.missing_helpers,
-            )
-            self.log("Triggered helper recreation request")
-        except Exception as err:
-            self.log(f"Could not trigger helper recreation: {err}")
 
     def _presence_state(self, entity_id: str) -> str:
         return str(self.get_state(entity_id) or "unknown")
