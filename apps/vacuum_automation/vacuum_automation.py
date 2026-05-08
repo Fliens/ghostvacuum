@@ -122,6 +122,7 @@ class VacuumAutomation(hass.Hass):
         self.max_history_entries = int(self.args.get("max_history_entries", 1500))
         self.history_weeks = int(self.args.get("history_weeks", 8))
         self.learning_window = int(self.args.get("learning_window", 6))
+        self.simulation_mode = bool(self.args.get("simulation_mode", False))
 
         self.rooms = self.args.get(
             "rooms",
@@ -220,7 +221,10 @@ class VacuumAutomation(hass.Hass):
 
         self._evaluate_travel_mode()
         self._publish_dashboard_state("initialisiert")
-        self.log("Vacuum Automation initialisiert")
+        if self.simulation_mode:
+            self.log("Vacuum Automation initialisiert [SIMULATION MODE - keine echten Vacuum-Befehle]")
+        else:
+            self.log("Vacuum Automation initialisiert")
 
     def _load_history_storage(self):
         """Load persistent history and learned durations from disk."""
@@ -1069,19 +1073,65 @@ class VacuumAutomation(hass.Hass):
         self.abort_requested = False
         self._clear_one_time_room_override()
 
-        self.call_service(
-            "dreame_vacuum/vacuum_clean_segment",
-            entity_id=self.vacuum_entity,
-            segments=[segment_id],
-        )
+        if self.simulation_mode:
+            self.log(
+                f"[SIMULATION] Wuerde Reinigung starten fuer {self._room_label(room)} "
+                f"(segment={segment_id}, geplant={self.active_room_planned_duration_min}min)"
+            )
+            self._schedule_simulated_completion(room)
+        else:
+            self.call_service(
+                "dreame_vacuum/vacuum_clean_segment",
+                entity_id=self.vacuum_entity,
+                segments=[segment_id],
+            )
+            self.log(
+                f"Starte Reinigung fuer {self._room_label(room)} "
+                f"(segment={segment_id}, geplant={self.active_room_planned_duration_min}min)"
+            )
 
         self._save_state()
         self._publish_dashboard_state("gestartet")
-        self.log(
-            f"Starte Reinigung fuer {self._room_label(room)} "
-            f"(segment={segment_id}, geplant={self.active_room_planned_duration_min}min)"
-        )
         self._send_start_notification(room)
+
+    def _schedule_simulated_completion(self, room: str):
+        """Schedule automatic completion of a simulated cleaning run."""
+        duration_min = self.active_room_planned_duration_min or self._room_effective_duration_min(room)
+        self.run_in(
+            self._on_simulated_cleaning_complete,
+            duration_min * 60,
+            room=room,
+        )
+        self.log(f"[SIMULATION] Raum {self._room_label(room)} wird in {duration_min}min als fertig markiert")
+
+    def _on_simulated_cleaning_complete(self, kwargs):
+        """Handle completion of a simulated cleaning run."""
+        room = kwargs.get("room")
+        if not self.active_room or self.active_room != room:
+            return
+
+        if self.abort_requested:
+            self._record_history_entry(room, "aborted")
+            self.log(f"[SIMULATION] Reinigung fuer {self._room_label(room)} wurde abgebrochen")
+        else:
+            self._record_history_entry(room, "completed")
+            self.last_cleaned[room] = self.datetime()
+            if room not in self.cleaned_during_absence:
+                self.cleaned_during_absence.append(room)
+            self.log(f"[SIMULATION] Raum erfolgreich gereinigt: {self._room_label(room)}")
+
+        self.active_room = None
+        self.active_room_started_at = None
+        self.active_room_planned_duration_min = None
+        self.active_room_configured_duration_min = None
+        self.active_room_travel_time_min = None
+        self.active_room_distance_km = None
+        self.abort_requested = False
+        self._save_state()
+        self._publish_dashboard_state("raum_fertig")
+
+        if self._is_everyone_away():
+            self._check_cleaning({})
 
     def _estimate_remaining_room_minutes(self, room: Optional[str]) -> int:
         if not room:
@@ -1148,8 +1198,11 @@ class VacuumAutomation(hass.Hass):
             return
 
         self.abort_requested = True
-        self.log(f"Breche Auto-Reinigung ab: {reason}")
-        self.call_service("vacuum/return_to_base", entity_id=self.vacuum_entity)
+        if self.simulation_mode:
+            self.log(f"[SIMULATION] Breche Auto-Reinigung ab: {reason}")
+        else:
+            self.log(f"Breche Auto-Reinigung ab: {reason}")
+            self.call_service("vacuum/return_to_base", entity_id=self.vacuum_entity)
         self._save_state()
         self._publish_dashboard_state("abbruch")
 
@@ -1338,19 +1391,20 @@ class VacuumAutomation(hass.Hass):
         return queue
 
     def _derive_status(self) -> str:
+        prefix = "[SIM] " if self.simulation_mode else ""
         if self.enabled_entity and self.get_state(self.enabled_entity) != "on":
-            return "Pausiert"
+            return f"{prefix}Pausiert"
         if self.travel_mode_active:
-            return "Reisemodus"
+            return f"{prefix}Reisemodus"
         if self._is_anyone_home():
-            return "Zuhause"
+            return f"{prefix}Zuhause"
         if self.active_room and self.abort_requested:
-            return "Abbruch laeuft"
+            return f"{prefix}Abbruch laeuft"
         if self.active_room:
-            return "Reinigt"
+            return f"{prefix}Reinigt"
         if self._is_everyone_away():
-            return "Bereit"
-        return "Warten"
+            return f"{prefix}Bereit"
+        return f"{prefix}Warten"
 
     def _publish_dashboard_state(self, reason: str):
         status = self._derive_status()
@@ -1380,6 +1434,7 @@ class VacuumAutomation(hass.Hass):
         common_attributes = {
             "friendly_name": "Vacuum Automation",
             "icon": "mdi:robot-vacuum-variant",
+            "simulation_mode": self.simulation_mode,
             "reason": reason,
             "presence_entities": self.presence_entities,
             "selected_presence_entities": self._current_presence_entities(),

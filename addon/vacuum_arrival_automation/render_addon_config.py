@@ -290,6 +290,7 @@ def default_options(raw_options: Dict[str, Any]) -> Dict[str, Any]:
         "return_summary_enabled": bool(
             raw_options.get("return_summary_enabled", True)
         ),
+        "simulation_mode": bool(raw_options.get("simulation_mode", False)),
         "rooms": parse_rooms(raw_options.get("rooms")),
         "generate_helper_package": bool(
             raw_options.get("generate_helper_package", True)
@@ -355,6 +356,7 @@ def build_app_config(options: Dict[str, Any]) -> Dict[str, Any]:
         "travel_mode_enabled": options["travel_mode_enabled"],
         "start_notifications_enabled": options["start_notifications_enabled"],
         "return_summary_enabled": options["return_summary_enabled"],
+        "simulation_mode": options["simulation_mode"],
         "rooms": {
             room["id"]: {
                 "name": room["name"],
