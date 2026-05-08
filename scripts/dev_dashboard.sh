@@ -13,10 +13,11 @@ export SIDEBAR_REDIRECT_PORT="${PORT}"
 
 usage() {
   cat <<EOF
-Usage: $0 [start|restart|stop|status]
+Usage: $0 [start|restart|stop|status|watch]
 
 Environment:
   SIDEBAR_REDIRECT_PORT  Port to bind, defaults to 8099.
+  WATCH_INTERVAL         Watch interval in seconds (default: 1).
 EOF
 }
 
@@ -112,7 +113,7 @@ start_server() {
   ensure_port_available
 
   echo "Starting local vacuum dashboard at http://127.0.0.1:${PORT}"
-  echo "Edit addon/vacuum_arrival_automation/dashboard.html and refresh the browser."
+  echo "Edit files in addon/vacuum_arrival_automation/dashboard/ and refresh the browser."
   echo "Press Ctrl+C to stop, or run: $0 stop"
 
   python3 addon/vacuum_arrival_automation/redirect_dashboard.py &
@@ -129,6 +130,70 @@ start_server() {
 
   trap cleanup EXIT INT TERM
   wait "${pid}"
+}
+
+start_server_detached() {
+  mkdir -p "${STATE_DIR}"
+  ensure_port_available
+
+  python3 addon/vacuum_arrival_automation/redirect_dashboard.py &
+  local pid="$!"
+  echo "${pid}" > "${PID_FILE}"
+  echo "Dashboard running at http://127.0.0.1:${PORT} (PID ${pid})."
+}
+
+watch_fingerprint() {
+  {
+    find addon/vacuum_arrival_automation -type f \
+      \( -name "*.py" -o -name "*.html" -o -name "*.css" -o -name "*.js" -o -name "*.yaml" \) \
+      -print0 \
+      | LC_ALL=C sort -z \
+      | while IFS= read -r -d '' file; do
+          shasum "${file}"
+        done
+  } | shasum | awk '{print $1}'
+}
+
+watch_server() {
+  local interval="${WATCH_INTERVAL:-1}"
+
+  stop_server >/dev/null || true
+  start_server_detached
+
+  local last_fingerprint
+  last_fingerprint="$(watch_fingerprint)"
+
+  echo "Watching addon/vacuum_arrival_automation for changes..."
+  echo "Open http://127.0.0.1:${PORT} and keep this process running."
+  echo "Press Ctrl+C to stop watcher and dashboard."
+
+  cleanup_watch() {
+    stop_server >/dev/null || true
+  }
+  trap cleanup_watch EXIT INT TERM
+
+  while true; do
+    local current_fingerprint
+    current_fingerprint="$(watch_fingerprint)"
+
+    if [[ "${current_fingerprint}" != "${last_fingerprint}" ]]; then
+      echo "Change detected. Restarting dashboard..."
+      stop_server >/dev/null || true
+      start_server_detached
+      last_fingerprint="${current_fingerprint}"
+      continue
+    fi
+
+    local pid
+    pid="$(saved_pid)"
+    if ! pid_is_running "${pid}" || ! pid_is_dashboard "${pid}"; then
+      echo "Dashboard process exited. Restarting..."
+      start_server_detached
+      last_fingerprint="$(watch_fingerprint)"
+    fi
+
+    sleep "${interval}"
+  done
 }
 
 status_server() {
@@ -157,6 +222,9 @@ case "${COMMAND}" in
     ;;
   status)
     status_server
+    ;;
+  watch)
+    watch_server
     ;;
   help|-h|--help)
     usage

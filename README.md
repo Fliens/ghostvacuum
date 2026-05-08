@@ -72,9 +72,13 @@ http://127.0.0.1:8099
 Running the command again restarts the previously tracked local dashboard, so you
 do not need to manually `pkill` old Python processes while iterating.
 
-The server reads `addon/vacuum_arrival_automation/dashboard.html` on every
-browser refresh and the add-on ships the same file. You can edit the HTML/CSS
-directly without restarting the Python server.
+- The server reads the dashboard from modular files in `addon/vacuum_arrival_automation/dashboard/`:
+- `index.html` — landing dashboard markup
+- `styles.css` — all CSS styles
+- `scripts.js` — client-side JavaScript (drag/drop, polling, interactions)
+The server assembles these files on every request, allowing you to edit individual
+components without restarting. See [dashboard/README.md](addon/vacuum_arrival_automation/dashboard/README.md)
+for a complete guide to the structure and data attributes.
 
 Useful commands:
 

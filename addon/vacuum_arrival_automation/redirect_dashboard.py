@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import html
+import re
 from datetime import datetime, timedelta
 import urllib.error
 import urllib.parse
@@ -24,11 +25,14 @@ EVENT_SET_ROOM_DUE = "vacuum_automation_set_room_due"
 LOCAL_DEV_ENV = "VACUUM_DASHBOARD_DEV"
 LOCAL_OPTIONS_ENV = "VACUUM_DASHBOARD_OPTIONS"
 LOCAL_CONFIG_PATH = Path(__file__).with_name("config.yaml")
-LOCAL_DASHBOARD_PATH = Path(__file__).with_name("dashboard.html")
-LOCAL_SETTINGS_PATH = Path(__file__).with_name("settings.html")
-LOCAL_STATIC_PATH = Path(__file__).with_name("static")
+LOCAL_DASHBOARD_PATH = Path(__file__).parent / "dashboard" / "index.html"
+LOCAL_STYLES_PATH = Path(__file__).parent / "dashboard" / "styles.css"
+LOCAL_SCRIPTS_PATH = Path(__file__).parent / "dashboard" / "scripts.js"
+LOCAL_SETTINGS_PATH = Path(__file__).parent / "dashboard" / "settings.html"
+LOCAL_STATIC_PATH = Path(__file__).parent / "dashboard" / "static"
 MOCK_STATES: dict[str, dict] | None = None
 ADDON_NAME = "Vacuum Arrival Automation"
+DEFAULT_PRESENCE_ENTITIES = ["person.resident_1"]
 WEEKDAY_OPTIONS = [
     ("mon", "Mo"),
     ("tue", "Di"),
@@ -42,9 +46,27 @@ DEFAULT_ACTIVE_WEEKDAYS = "mon,tue,wed,thu,fri,sat"
 
 
 def load_dashboard_template() -> str:
-    if LOCAL_DASHBOARD_PATH.exists():
-        return LOCAL_DASHBOARD_PATH.read_text(encoding="utf-8")
-    return HTML
+  # Assemble dashboard from partials when available (styles, body, scripts)
+  body = LOCAL_DASHBOARD_PATH.read_text(encoding="utf-8") if LOCAL_DASHBOARD_PATH.exists() else ""
+  styles = LOCAL_STYLES_PATH.read_text(encoding="utf-8") if LOCAL_STYLES_PATH.exists() else ""
+  scripts = LOCAL_SCRIPTS_PATH.read_text(encoding="utf-8") if LOCAL_SCRIPTS_PATH.exists() else ""
+  parts = []
+  if styles and "</head>" in body:
+    body = body.replace("</head>", f'<style>\n{styles}\n</style>\n</head>', 1)
+
+  # If body contains a closing </body>, inject scripts right before it so the
+  # assembled page stays valid. Otherwise append body and scripts in sequence.
+  if body:
+    if scripts and "</body>" in body:
+      body = body.replace("</body>", f'<script>\n{scripts}\n</script></body>', 1)
+    parts.append(body)
+  else:
+    if scripts:
+      parts.append(f'<script>\n{scripts}\n</script>')
+
+  if parts:
+    return "".join(parts)
+  return HTML
 
 
 def load_settings_template() -> str:
@@ -121,6 +143,107 @@ def parse_rooms(raw_rooms: Any) -> List[dict]:
             }
         )
     return rooms
+
+
+def parse_presence_entities(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "").strip()
+    if not text:
+        return list(DEFAULT_PRESENCE_ENTITIES)
+    try:
+        parsed = yaml.safe_load(text)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, list):
+        return [str(item).strip() for item in parsed if str(item).strip()]
+    items = [part.strip() for part in re.split(r"[\n,]+", text)]
+    return [item for item in items if item] or list(DEFAULT_PRESENCE_ENTITIES)
+
+
+def slugify(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_") or "segment"
+
+
+def parse_json_mapping(value: Any) -> dict:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"unknown", "unavailable"}:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): str(val) for key, val in parsed.items() if str(val).strip()}
+
+
+def segment_id_value(value: Any) -> Optional[int]:
+    if value in [None, ""]:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_vacuum_segments(value: Any, depth: int = 0) -> List[dict]:
+    if depth > 5:
+        return []
+    segments: List[dict] = []
+    if isinstance(value, dict):
+        direct_id = None
+        for key in ["segment_id", "segmentId", "segment", "room_id", "roomId"]:
+            direct_id = segment_id_value(value.get(key))
+            if direct_id is not None:
+                break
+        if direct_id is not None:
+            name = (
+                value.get("name")
+                or value.get("room_name")
+                or value.get("roomName")
+                or value.get("friendly_name")
+                or value.get("label")
+                or f"Segment {direct_id}"
+            )
+            segments.append({"segment_id": direct_id, "name": str(name)})
+
+        for key, item in value.items():
+            if isinstance(item, dict) and str(key).isdigit():
+                nested_name = (
+                    item.get("name")
+                    or item.get("room_name")
+                    or item.get("roomName")
+                    or item.get("friendly_name")
+                    or f"Segment {key}"
+                )
+                segments.append({"segment_id": int(key), "name": str(nested_name)})
+            segments.extend(extract_vacuum_segments(item, depth + 1))
+    elif isinstance(value, list):
+        for item in value:
+            segments.extend(extract_vacuum_segments(item, depth + 1))
+
+    unique: dict[int, dict] = {}
+    for item in segments:
+        segment_id = segment_id_value(item.get("segment_id"))
+        if segment_id is None:
+            continue
+        unique[segment_id] = {"segment_id": segment_id, "name": str(item.get("name") or f"Segment {segment_id}")}
+    return [unique[key] for key in sorted(unique)]
+
+
+def room_name_overrides_from_summary(summary: dict) -> dict:
+    global_states = summary.get("states", {}).get("global", {})
+    return parse_json_mapping(state_value(global_states.get("room_names"), ""))
+
+
+def selected_presence_from_summary(summary: dict) -> List[str]:
+    global_states = summary.get("states", {}).get("global", {})
+    raw = state_value(global_states.get("selected_presence_entities"), "")
+    parsed = parse_presence_entities(raw)
+    return parsed if raw else parse_presence_entities(summary.get("options", {}).get("presence_entities"))
 
 
 def api_request(path: str, method: str = "GET", payload: dict | None = None):
@@ -259,6 +382,14 @@ def helper_entities(options: dict, rooms: List[dict]) -> Dict[str, Any]:
                 "one_time_room_override_entity",
                 f"input_text.{helper_prefix}_one_time_room_override",
             ),
+            "room_names": options.get(
+                "room_names_entity",
+                f"input_text.{helper_prefix}_room_names",
+            ),
+            "selected_presence_entities": options.get(
+                "selected_presence_entities_entity",
+                f"input_text.{helper_prefix}_selected_presence_entities",
+            ),
             "active_weekdays": options.get(
                 "active_weekdays_entity",
                 f"input_text.{helper_prefix}_active_weekdays",
@@ -345,6 +476,10 @@ def mock_states() -> dict[str, dict]:
             value = options.get("max_distance_km", 0)
         elif key == "active_weekdays":
             value = options.get("active_weekdays", DEFAULT_ACTIVE_WEEKDAYS)
+        elif key == "room_names":
+            value = options.get("room_names", "{}")
+        elif key == "selected_presence_entities":
+            value = ",".join(parse_presence_entities(options.get("presence_entities")))
         else:
             value = "unknown"
         states[entity_id] = mock_state(entity_id, value)
@@ -473,7 +608,28 @@ def mock_states() -> dict[str, dict]:
             "bin_full": False,
             "water_tank_empty": False,
             "mop_attached": True,
+            "segments": [
+                {"segment_id": 1, "name": "Segment 1"},
+                {"segment_id": 2, "name": "Segment 2"},
+                {"segment_id": 3, "name": "Segment 3"},
+                {"segment_id": 4, "name": "Segment 4"},
+            ],
         },
+    )
+    states["person.resident_1"] = mock_state(
+        "person.resident_1",
+        "not_home",
+        {"friendly_name": "Resident 1", "latitude": 52.6, "longitude": 13.5},
+    )
+    states["person.resident_2"] = mock_state(
+        "person.resident_2",
+        "not_home",
+        {"friendly_name": "Resident 2", "latitude": 52.7, "longitude": 13.6},
+    )
+    states["person.gast"] = mock_state(
+        "person.gast",
+        "home",
+        {"friendly_name": "Gast", "latitude": 52.52, "longitude": 13.405},
     )
     vacuum_base = vacuum_base_id(vacuum_entity)
     states[f"sensor.{vacuum_base}_battery_level"] = mock_state(
@@ -658,6 +814,65 @@ def collect_robot_states(options: dict, vacuum_state: Any) -> dict:
     }
 
 
+def available_presence_entities(configured: List[str]) -> List[dict]:
+    seen = set()
+    people: List[dict] = []
+    for state in all_states():
+        entity_id = str(state.get("entity_id") or "")
+        if not entity_id.startswith(("person.", "device_tracker.")):
+            continue
+        attrs = state.get("attributes", {}) if isinstance(state.get("attributes"), dict) else {}
+        seen.add(entity_id)
+        people.append(
+            {
+                "entity_id": entity_id,
+                "name": str(attrs.get("friendly_name") or entity_id.split(".", 1)[-1].replace("_", " ").title()),
+                "state": str(state.get("state") or "unknown"),
+            }
+        )
+    for entity_id in configured:
+        if entity_id not in seen:
+            people.append(
+                {
+                    "entity_id": entity_id,
+                    "name": entity_id.split(".", 1)[-1].replace("_", " ").title(),
+                    "state": "unknown",
+                }
+            )
+    return sorted(people, key=lambda item: (not item["entity_id"].startswith("person."), item["name"].lower()))
+
+
+def room_segment_catalog(vacuum_state: Any, configured_rooms: List[dict], room_names: dict) -> List[dict]:
+    configured_by_segment: dict[int, dict] = {}
+    for room in configured_rooms:
+        segment_id = segment_id_value(room.get("segment_id"))
+        if segment_id is not None:
+            configured_by_segment[segment_id] = room
+
+    discovered = extract_vacuum_segments(vacuum_state.get("attributes", {}) if isinstance(vacuum_state, dict) else {})
+    discovered_by_segment = {int(item["segment_id"]): item for item in discovered}
+    all_segment_ids = sorted(set(configured_by_segment) | set(discovered_by_segment))
+
+    result = []
+    for segment_id in all_segment_ids:
+        configured = configured_by_segment.get(segment_id) or {}
+        discovered_item = discovered_by_segment.get(segment_id) or {}
+        result.append(
+            {
+                "segment_id": segment_id,
+                "room_key": configured.get("id") or f"segment_{segment_id}",
+                "name": room_names.get(str(segment_id))
+                or configured.get("name")
+                or discovered_item.get("name")
+                or f"Segment {segment_id}",
+                "detected_name": discovered_item.get("name") or f"Segment {segment_id}",
+                "configured": bool(configured),
+                "detected": bool(discovered_item),
+            }
+        )
+    return result
+
+
 def build_summary() -> dict:
     options = load_options()
     rooms = parse_rooms(options.get("rooms"))
@@ -667,6 +882,8 @@ def build_summary() -> dict:
     history_state = states["sensors"].get("history") or {}
     vacuum_state = state_for(options.get("vacuum_entity", ""))
     robot_states = collect_robot_states(options, vacuum_state)
+    configured_presence = parse_presence_entities(options.get("presence_entities"))
+    room_names = parse_json_mapping(state_value(states["global"].get("room_names"), ""))
     status_attrs = status_state.get("attributes", {}) if isinstance(status_state, dict) else {}
     history_attrs = history_state.get("attributes", {}) if isinstance(history_state, dict) else {}
     return {
@@ -674,6 +891,8 @@ def build_summary() -> dict:
             "vacuum_entity": options.get("vacuum_entity"),
             "notify_service": options.get("notify_service"),
             "presence_entities": options.get("presence_entities"),
+            "room_names_entity": options.get("room_names_entity"),
+            "selected_presence_entities_entity": options.get("selected_presence_entities_entity"),
             "person_entity": options.get("person_entity"),
             "travel_person_entity": options.get("travel_person_entity"),
             "waze_entity": options.get("waze_entity"),
@@ -686,6 +905,8 @@ def build_summary() -> dict:
         },
         "entities": entity_map,
         "states": {**states, "vacuum": vacuum_state, "robot": robot_states},
+        "available_presence_entities": available_presence_entities(configured_presence),
+        "room_segments": room_segment_catalog(vacuum_state, rooms, room_names),
         "status": {
             "reason": status_attrs.get("reason"),
             "presence_summary": status_attrs.get("presence_summary", []),
@@ -1578,6 +1799,168 @@ def render_robot_alerts(summary: dict) -> str:
     )
 
 
+STATE_MACHINE_STEPS = [
+    ("paused", "Pausiert"),
+    ("home", "Zuhause"),
+    ("away", "Bereit"),
+    ("travel", "Reisemodus"),
+    ("planning", "Planung"),
+    ("selected", "Raum gewählt"),
+    ("cleaning", "Reinigt"),
+    ("aborting", "Abbruch"),
+    ("done", "Abgeschlossen"),
+    ("waiting", "Warten"),
+]
+
+
+def _state_machine_context(summary: dict) -> dict:
+    sensors = summary.get("states", {}).get("sensors", {})
+    global_states = summary.get("states", {}).get("global", {})
+    status = summary.get("status", {})
+    status_text = state_value(sensors.get("status"), "Warten")
+    status_key = status_text.lower()
+    active_room = active_room_label(summary)
+    next_rooms = ordered_room_queue(summary)
+    next_room = next_rooms[0] if next_rooms else None
+    return_window = number_value(state_value(sensors.get("return_window"), ""), 0) or 0
+    travel_time = number_value(state_value(sensors.get("travel_time"), ""), 0) or 0
+    distance = number_value(state_value(sensors.get("distance_to_home"), ""))
+    enabled = state_value(global_states.get("enabled"), status.get("enabled", "on")).lower()
+    people = status.get("presence_summary", []) or []
+    home_people = [person for person in people if person_is_home(person)]
+    active_attrs = state_attrs(sensors.get("active_room"))
+    remaining = number_value(active_attrs.get("remaining_min"), 0) or 0
+    planned = number_value(active_attrs.get("planned_duration_min"), 0) or 0
+    progress = 0
+    if active_room and planned > 0:
+        progress = max(0, min(100, ((planned - remaining) / planned) * 100))
+
+    if enabled == "off" or status_key == "pausiert":
+        active_step = "paused"
+    elif "abbruch" in status_key:
+        active_step = "aborting"
+    elif status.get("travel_mode_active") or "reisemodus" in status_key:
+        active_step = "travel"
+    elif active_room or "reinigt" in status_key:
+        active_step = "cleaning"
+    elif home_people or "zuhause" in status_key:
+        active_step = "home"
+    elif status.get("reason") == "raum_fertig":
+        active_step = "done"
+    elif next_room:
+        active_step = "selected"
+    elif "bereit" in status_key:
+        active_step = "planning"
+    elif people and not home_people:
+        active_step = "away"
+    else:
+        active_step = "waiting"
+
+    if active_step == "paused":
+        headline = "Automatik pausiert"
+        detail = "Aktiviere die Automatik, damit wieder geplant wird."
+    elif active_step == "home":
+        headline = "Reinigung blockiert"
+        detail = f"{len(home_people)} Bewohner zuhause."
+    elif active_step == "travel":
+        headline = "Reisemodus aktiv"
+        reason = status.get("travel_mode_reason") or "Langzeit- oder Distanzregel"
+        detail = str(reason).replace("_", " ")
+    elif active_step == "cleaning":
+        headline = f"Reinigt {active_room}"
+        detail = f"{format_number(remaining, ' min')} Restzeit von {format_number(planned, ' min')} geplant."
+    elif active_step == "aborting":
+        headline = "Abbruch läuft"
+        detail = "Der Roboter kehrt zur Basis zurück."
+    elif active_step == "selected" and next_room:
+        headline = f"Nächster Raum: {next_room.get('room')}"
+        detail = f"{format_number(next_room.get('effective_duration_min'), ' min')} Dauer, Priorität {format_number(next_room.get('priority'))}."
+    elif active_step == "planning":
+        headline = "Plant nächsten Lauf"
+        detail = "Rückkehrfenster und Raumprioritäten werden bewertet."
+    elif active_step == "away":
+        headline = "Alle weg"
+        detail = "Die Automatik ist bereit, sobald ein Raum passt."
+    elif active_step == "done":
+        headline = "Letzter Raum abgeschlossen"
+        detail = "Historie und Lernwerte wurden aktualisiert."
+    else:
+        headline = "Wartet auf passende Bedingungen"
+        detail = "Kein startbarer Raum oder Daten fehlen."
+
+    return {
+        "active_step": active_step,
+        "headline": headline,
+        "detail": detail,
+        "progress": progress,
+        "metrics": {
+            "status": status_text,
+            "eta": format_number(travel_time, " min"),
+            "window": format_number(return_window, " min"),
+            "distance": format_number(distance, " km"),
+            "active_room": active_room or "Keiner",
+            "next_room": str(next_room.get("room")) if next_room else "Keiner",
+            "reason": status.get("reason") or "-",
+        },
+    }
+
+
+def render_state_machine(summary: dict) -> str:
+    """Render compact state machine with pills and target node."""
+    sensors = summary.get("states", {}).get("sensors", {})
+    global_states = summary.get("states", {}).get("global", {})
+    status = summary.get("status", {})
+    
+    # Derive pill conditions from summary
+    status_key = state_value(sensors.get("status"), "Warten").lower()
+    active_room = state_value(sensors.get("active_room"), "")
+    enabled = state_value(global_states.get("enabled"), status.get("enabled", "on")).lower()
+    people = status.get("presence_summary", []) or []
+    home_people = [p for p in people if isinstance(p, dict) and p.get("state", "").lower() in {"home", "zuhause"}]
+    
+    automation_active = enabled != "off"
+    nobody_home = len(home_people) == 0
+    travel_inactive = not status.get("travel_mode_active") and "reisemodus" not in status_key
+    manual_inactive = not active_room or str(active_room).lower() in {"", "-", "keine", "keiner", "none"}
+    
+    all_ok = automation_active and nobody_home and travel_inactive and manual_inactive
+    
+    # Build pills HTML with data attributes for client-side polling
+    pills_html = ""
+    pills = [
+        ("automation_active", "Automatik aktiv", automation_active),
+        ("nobody_home", "Niemand zuhause", nobody_home),
+        ("travel_inactive", "Nicht im Reisemodus", travel_inactive),
+        ("manual_inactive", "Keine manuelle Reinigung", manual_inactive),
+    ]
+    
+    for key, label, ok in pills:
+        ok_class = "ok" if ok else ""
+        pills_html += (
+            f'<div class="pill {ok_class}" data-pill-key="{escape(key)}">'
+            f'<span>●</span><span>{escape(label)}</span>'
+            f'</div>'
+        )
+    
+    # Target node shows "Reinigung möglich" when all pills are ok
+    target_class = "ok" if all_ok else ""
+    target_html = (
+        f'<div class="sm-target {target_class}" data-cleaning-node>'
+        f'Reinigung möglich'
+        f'</div>'
+    )
+    
+    return (
+        '<section class="card state-machine-card state-machine-compact" aria-label="Live State Machine" data-state-machine>'
+        '<div class="section-header"><h2>Reinigungszustand</h2>'
+        '<div class="state-live-indicator"><span></span>Live</div></div>'
+        '<div class="sm-grid">'
+        f'<div class="sm-pills">{pills_html}</div>'
+        f'{target_html}'
+        '</div></section>'
+    )
+
+
 def render_dashboard_html() -> str:
     summary = build_summary()
     states = summary.get("states", {}).get("sensors", {})
@@ -1712,6 +2095,7 @@ def render_dashboard_html() -> str:
         "return_buffer": format_number(buffer_min, " min"),
         "return_window": format_number(return_window, " min"),
         "return_window_min": str(int(return_window)),
+        "state_machine": render_state_machine(summary),
         "room_sections": render_room_sections(summary),
         "history_card": render_history_card(summary),
     }
@@ -1763,47 +2147,28 @@ def render_setting_number(key: str, title: str, description: str, entity_id: str
 
 
 def render_settings_toggles(summary: dict) -> str:
-    global_entities = summary.get("entities", {}).get("global", {})
-    global_states = summary.get("states", {}).get("global", {})
-    items = [
-        ("enabled", "Automation", "Schaltet automatische Starts komplett ein oder aus."),
-    ]
-    rows = [
-        render_setting_toggle(key, title, description, global_entities.get(key, ""), global_states.get(key))
-        for key, title, description in items
-        if global_entities.get(key)
-    ]
-    return "".join(rows) or '<p class="empty">Keine Schalter-Helper gefunden.</p>'
+  """Render the basic toggle controls shown in Settings (no state machine).
 
+  This returns a set of switch rows for global helper entities (enabled, push,
+  travel logic, ...). The detailed live state machine belongs only on the
+  dashboard and must not be injected here.
+  """
+  global_entities = summary.get("entities", {}).get("global", {})
+  global_states = summary.get("states", {}).get("global", {})
 
-def render_settings_travel_toggle(summary: dict) -> str:
-    global_entities = summary.get("entities", {}).get("global", {})
-    global_states = summary.get("states", {}).get("global", {})
-    entity_id = global_entities.get("travel_logic", "")
-    if not entity_id:
-        return ""
-    return render_setting_toggle(
-        "travel_logic",
-        "Reiselogik",
-        "Pausiert die Automation, wenn jemand außerhalb des Reiseradius ist.",
-        entity_id,
-        global_states.get("travel_logic"),
-    )
+  # Only include core/general toggles here. Tab-specific toggles live in their
+  # respective renderers (`render_settings_push`, `render_settings_travel_toggle`).
+  items = [
+    ("enabled", "Automatik aktivieren", "Hauptschalter für automatische Starts."),
+  ]
 
-
-def render_settings_schedule(summary: dict) -> str:
-    global_entities = summary.get("entities", {}).get("global", {})
-    global_states = summary.get("states", {}).get("global", {})
-    items = [
-        ("start_hour", "Automatisch reinigen ab", "Ab dieser Uhrzeit darf der Staubsauger automatisch reinigen.", "1"),
-        ("end_hour", "Automatisch reinigen bis", "Bis zu dieser Uhrzeit darf der Staubsauger reinigen.", "1"),
-    ]
-    rows = [
-        render_setting_number(key, title, description, global_entities.get(key, ""), global_states.get(key), step)
-        for key, title, description, step in items
-        if global_entities.get(key)
-    ]
-    return "".join(rows)
+  rows = [
+    render_setting_toggle(key, title, description, global_entities.get(key, ""), global_states.get(key))
+    for key, title, description in items
+    if global_entities.get(key)
+  ]
+  return "".join(rows) or '<p class="empty">Keine Schalter konfiguriert.</p>'
+  
 
 
 def active_weekday_keys(summary: dict) -> set[str]:
@@ -1869,6 +2234,37 @@ def render_settings_push(summary: dict) -> str:
     return "".join(rows) or '<p class="empty">Keine Push-Helper gefunden.</p>'
 
 
+def render_settings_schedule(summary: dict) -> str:
+    """Render schedule settings (start/end hour)."""
+    global_entities = summary.get("entities", {}).get("global", {})
+    global_states = summary.get("states", {}).get("global", {})
+    items = [
+        ("start_hour", "Startzeit", "Stunde", global_entities.get("start_hour", ""), global_states.get("start_hour")),
+        ("end_hour", "Endzeit", "Stunde", global_entities.get("end_hour", ""), global_states.get("end_hour")),
+    ]
+    rows = [
+        render_setting_number(key, title, description, entity_id, state)
+        for key, title, description, entity_id, state in items
+        if entity_id
+    ]
+    return "".join(rows) or ""
+
+
+def render_settings_travel_toggle(summary: dict) -> str:
+    """Render travel mode toggle."""
+    global_entities = summary.get("entities", {}).get("global", {})
+    global_states = summary.get("states", {}).get("global", {})
+    items = [
+        ("travel_logic", "Reiselogik", "Automatisch den Staubsauger pausieren, wenn du reist."),
+    ]
+    rows = [
+        render_setting_toggle(key, title, description, global_entities.get(key, ""), global_states.get(key))
+        for key, title, description in items
+        if global_entities.get(key)
+    ]
+    return "".join(rows) or '<p class="empty">Keine Reiselogik-Helper gefunden.</p>'
+
+
 def render_settings_numbers(summary: dict) -> str:
     global_entities = summary.get("entities", {}).get("global", {})
     global_states = summary.get("states", {}).get("global", {})
@@ -1918,15 +2314,20 @@ def render_settings_home_map(summary: dict) -> str:
 
 def render_settings_rooms(summary: dict) -> str:
     rooms = summary.get("states", {}).get("rooms", []) or []
+    rooms_by_id = {str(room.get("id")): room for room in rooms}
     stats = summary.get("status", {}).get("room_stats", []) or []
-    if not rooms:
+    segments = summary.get("room_segments", []) or []
+    if not segments:
         return '<p class="empty">Keine Räume konfiguriert.</p>'
 
     stat_by_key = {str(item.get("room_key")): item for item in stats if isinstance(item, dict)}
+    room_names_entity = summary.get("entities", {}).get("global", {}).get("room_names", "")
     rendered = []
-    for index, room in enumerate(rooms, start=1):
-        room_stats = stat_by_key.get(str(room.get("id")), {})
-        enabled = bool_on(room.get("enabled_state"))
+    for index, segment in enumerate(segments, start=1):
+        room = rooms_by_id.get(str(segment.get("room_key"))) or {}
+        room_key = str(segment.get("room_key") or room.get("id") or f"segment_{segment.get('segment_id')}")
+        room_stats = stat_by_key.get(room_key, {})
+        enabled = bool_on(room.get("enabled_state")) if room else True
         enabled_text = "Aktiv" if enabled else "Inaktiv"
         enabled_class = "on" if enabled else ""
         room_class = "" if enabled else " inactive"
@@ -1938,28 +2339,26 @@ def render_settings_rooms(summary: dict) -> str:
         meta = " · ".join(
             part
             for part in [
+                f"Segment {segment.get('segment_id')}",
                 f"gelernt {format_number(learned, ' min')}" if learned is not None else "",
                 f"konfiguriert {format_number(configured, ' min')}" if configured is not None else "",
                 f"Schnitt {format_number(actual, ' min')}" if actual is not None else "",
             ]
             if part
         )
-        rendered.append(
-            f"""
-            <article class="room-settings-card{room_class}" data-room-card data-room-key="{escape(room.get("id"))}">
-              <span class="room-drag-cue" draggable="true" aria-hidden="true"></span>
-              <div class="room-settings-head">
-                <div>
-                  <div class="room-title-line">
-                    <strong><span>{index}.</span> {escape(room.get("name"))}</strong>
+        enabled_button = ""
+        if room.get("enabled"):
+            enabled_button = f"""
                     <button class="status-button {enabled_class}" type="button" data-toggle-entity="{escape(room.get("enabled"))}">
                       {escape(enabled_text)}
                     </button>
-                  </div>
-                  <span>{escape(meta or "Noch keine Laufdaten")}</span>
-                </div>
-              </div>
-              <div class="room-settings-grid">
+            """
+        else:
+            enabled_button = '<span class="status-button on">Neu</span>'
+
+        interval_row = ""
+        if room.get("interval_h"):
+            interval_row = f"""
                 <label class="number-row room-interval-row">
                   <span>
                     <strong>Intervall</strong>
@@ -1968,11 +2367,64 @@ def render_settings_rooms(summary: dict) -> str:
                   <input type="number" step="0.5" value="{escape(interval_days)}" data-number-entity="{escape(room.get("interval_h", ""))}" data-setting-key="interval_days">
                   <span class="room-interval-unit">Tage</span>
                 </label>
+            """
+        rendered.append(
+            f"""
+            <article class="room-settings-card{room_class}" data-room-card data-room-key="{escape(room_key)}">
+              <span class="room-drag-cue" draggable="true" aria-hidden="true"></span>
+              <div class="room-settings-head">
+                <div>
+                  <div class="room-title-line">
+                    <strong><span>{index}.</span> <b data-room-title-name>{escape(segment.get("name"))}</b></strong>
+                    {enabled_button}
+                  </div>
+                  <span>{escape(meta or "Noch keine Laufdaten")}</span>
+                </div>
+              </div>
+              <div class="room-settings-grid">
+                <label class="number-row room-name-row">
+                  <span>
+                    <strong>Name</strong>
+                    <small>Name für Segment {escape(segment.get("segment_id"))}</small>
+                  </span>
+                  <input type="text" value="{escape(segment.get("name"))}" data-room-name data-segment-id="{escape(segment.get("segment_id"))}" data-room-names-entity="{escape(room_names_entity)}">
+                </label>
+                {interval_row}
               </div>
             </article>
             """
         )
     return "".join(rendered)
+
+
+def render_settings_presence(summary: dict) -> str:
+    entity_id = summary.get("entities", {}).get("global", {}).get("selected_presence_entities", "")
+    selected = set(selected_presence_from_summary(summary))
+    people = summary.get("available_presence_entities", []) or []
+    if not people:
+        return '<p class="empty">Keine Personen oder Tracker gefunden.</p>'
+
+    rows = []
+    for person in people:
+        person_id = str(person.get("entity_id") or "")
+        active = person_id in selected
+        rows.append(
+            f"""
+            <button class="presence-choice {'active' if active else ''}" type="button" data-presence-person="{escape(person_id)}" aria-pressed="{'true' if active else 'false'}">
+              <span>
+                <strong>{escape(person.get("name"))}</strong>
+                <small>{escape(person_id)}</small>
+              </span>
+              <em>{'Berücksichtigt' if active else 'Ignoriert'}</em>
+            </button>
+            """
+        )
+
+    return f"""
+      <div class="presence-picker" data-presence-picker data-presence-entity="{escape(entity_id)}">
+        {''.join(rows)}
+      </div>
+    """
 
 
 def render_settings_system(summary: dict) -> str:

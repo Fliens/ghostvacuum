@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vacuum Automation Dashboard</title>
+</head>
+<body>
+  <main class="shell">
+    <div class="dashboard-grid">
+      <div class="dashboard-left">
+        <section class="card hero-card" aria-label="Staubsauger">
+          <div class="hero-header">
+            <div class="hero-robot">
+              <span class="hero-robot-icon {{{hero_status_class}}}">{{{hero_status_icon}}}</span>
+              <div class="hero-robot-info">
+                <span class="hero-robot-title">{{{hero_status_title}}}</span>
+                <span class="hero-robot-sub">{{{hero_status_sub}}}</span>
+              </div>
+            </div>
+            <a class="hero-settings-btn" href="/settings" aria-label="Einstellungen" title="Einstellungen">⚙️</a>
+          </div>
+
+          <div class="hero-levels">
+            <div class="hero-level-group">
+              <div class="hero-level-title">Roboter</div>
+              <div class="hero-level-items">
+                {{{hero_robot_items}}}
+              </div>
+            </div>
+            <div class="hero-level-group">
+              <div class="hero-level-title">Station</div>
+              <div class="hero-level-items">
+                {{{hero_station_items}}}
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-settings-list">
+            <div class="hero-setting-chip {{{hero_start_push_class}}}" aria-label="Start-Push {{{hero_start_push_text}}}" title="Start-Push {{{hero_start_push_text}}}">
+              <span class="hero-setting-label">Start-Push</span>
+              <span class="hero-setting-status">{{{hero_start_push_text}}}</span>
+            </div>
+            <div class="hero-setting-chip {{{hero_return_push_class}}}" aria-label="Rückkehr-Push {{{hero_return_push_text}}}" title="Rückkehr-Push {{{hero_return_push_text}}}">
+              <span class="hero-setting-label">Rückkehr-Push</span>
+              <span class="hero-setting-status">{{{hero_return_push_text}}}</span>
+            </div>
+            <div class="hero-setting-chip {{{hero_travel_class}}}" aria-label="Reiselogik {{{hero_travel_text}}}" title="Reiselogik {{{hero_travel_text}}}">
+              <span class="hero-setting-label">Reiselogik</span>
+              <span class="hero-setting-status">{{{hero_travel_text}}}</span>
+            </div>
+            <div class="hero-setting-chip on" aria-label="Zeitfenster {{{hero_schedule_text}}}" title="Zeitfenster {{{hero_schedule_text}}}">
+              <span class="hero-setting-label">Zeitfenster</span>
+              <span class="hero-setting-status">{{{hero_schedule_text}}}</span>
+            </div>
+            <div class="hero-setting-chip on" aria-label="Wochentage {{{hero_weekdays_text}}}" title="Wochentage {{{hero_weekdays_text}}}">
+              <span class="hero-setting-label">Wochentage</span>
+              <span class="hero-setting-status">{{{hero_weekdays_text}}}</span>
+            </div>
+          </div>
+        </section>
+
+        {{{state_machine}}}
+
+        <section class="card presence-card" aria-label="Anwesenheit">
+          <div class="section-header">
+            <h2>Anwesenheit</h2>
+            <div class="presence-summary {{presence_summary_class}}">{{presence_summary}}</div>
+          </div>
+          <div class="presence-overview">
+            <div class="presence-metric {{travel_metric_class}}">
+              <span>Nächste Rückkehr</span>
+              <strong>{{travel_time}}</strong>
+            </div>
+            <div class="presence-metric {{window_metric_class}}">
+              <span>Reinigungsfenster</span>
+              <strong>{{return_window}}</strong>
+            </div>
+            <div class="presence-metric">
+              <span>Aktueller Puffer</span>
+              <strong>{{return_buffer}}</strong>
+            </div>
+          </div>
+          {{{travel_guard}}}
+          <div class="presence-list-title">Bewohner</div>
+          <div class="presence-list">
+            {{{presence_rows}}}
+          </div>
+        </section>
+      </div>
+
+      <div class="dashboard-right">
+        <section class="card queue-card" aria-label="Nächste Räume">
+          <div class="section-header">
+            <h2>Reinigungsplan</h2>
+          </div>
+          <div class="room-list" data-room-list data-return-window="{{return_window_min}}">
+            {{{room_sections}}}
+          </div>
+          <p class="override-note">Räume innerhalb eines Abschnitts ziehen, um sie einmalig vorzuziehen. Zwischen den Abschnitten ziehen, um den Status zu überschreiben.</p>
+        </section>
+        <section class="card history-card" aria-label="Historie">
+          <div class="section-header">
+            <h2>Historie</h2>
+          </div>
+          {{{history_card}}}
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

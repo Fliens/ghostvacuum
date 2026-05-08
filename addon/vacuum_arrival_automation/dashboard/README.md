@@ -1,0 +1,1 @@
+This folder contains modular dashboard partials used by the dev server. The server dynamically assembles `index.html`, `styles.css`, and `scripts.js`. Edit these files during development and reload the page to see changes.
