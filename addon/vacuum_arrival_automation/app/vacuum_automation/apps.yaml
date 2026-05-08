@@ -47,6 +47,7 @@ vacuum_automation:
   # Optional helper overrides for runtime tuning from the UI
   start_hour_entity: input_number.vacuum_automation_start_hour
   end_hour_entity: input_number.vacuum_automation_end_hour
+  active_weekdays_entity: input_text.vacuum_automation_active_weekdays
   return_buffer_entity: input_number.vacuum_automation_return_buffer
   fallback_speed_entity: input_number.vacuum_automation_fallback_speed
   default_travel_time_entity: input_number.vacuum_automation_default_travel_time
@@ -54,6 +55,7 @@ vacuum_automation:
   # Defaults if helper overrides are missing
   start_hour: 8
   end_hour: 22
+  active_weekdays: mon,tue,wed,thu,fri,sat
   check_interval_min: 30
   monitor_interval_min: 5
   return_buffer_min: 5

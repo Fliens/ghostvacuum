@@ -104,11 +104,13 @@
       height: 32px;
       border: 1px solid var(--line);
       background: var(--panel);
+      color: inherit;
       border-radius: 6px;
       font-size: 14px;
       cursor: pointer;
       display: grid;
       place-items: center;
+      text-decoration: none;
       flex-shrink: 0;
     }
     .hero-settings-btn:hover {
@@ -926,7 +928,7 @@
                 <span class="hero-robot-sub">{{{hero_status_sub}}}</span>
               </div>
             </div>
-            <button class="hero-settings-btn" type="button" aria-label="Einstellungen">⚙️</button>
+            <a class="hero-settings-btn" href="/settings" aria-label="Einstellungen" title="Einstellungen">⚙️</a>
           </div>
 
           <div class="hero-levels">
@@ -953,17 +955,17 @@
               <span class="hero-setting-label">Rückkehr-Push</span>
               <span class="hero-setting-status">{{{hero_return_push_text}}}</span>
             </div>
-            <div class="hero-setting-chip {{{hero_learning_class}}}" aria-label="Lernmodus {{{hero_learning_text}}}" title="Lernmodus {{{hero_learning_text}}}">
-              <span class="hero-setting-label">Lernmodus</span>
-              <span class="hero-setting-status">{{{hero_learning_text}}}</span>
-            </div>
             <div class="hero-setting-chip {{{hero_travel_class}}}" aria-label="Reiselogik {{{hero_travel_text}}}" title="Reiselogik {{{hero_travel_text}}}">
               <span class="hero-setting-label">Reiselogik</span>
               <span class="hero-setting-status">{{{hero_travel_text}}}</span>
             </div>
-            <div class="hero-setting-chip {{{hero_return_guard_class}}}" aria-label="Rückkehrschutz {{{hero_return_guard_text}}}" title="Rückkehrschutz {{{hero_return_guard_text}}}">
-              <span class="hero-setting-label">Rückkehrschutz</span>
-              <span class="hero-setting-status">{{{hero_return_guard_text}}}</span>
+            <div class="hero-setting-chip on" aria-label="Zeitfenster {{{hero_schedule_text}}}" title="Zeitfenster {{{hero_schedule_text}}}">
+              <span class="hero-setting-label">Zeitfenster</span>
+              <span class="hero-setting-status">{{{hero_schedule_text}}}</span>
+            </div>
+            <div class="hero-setting-chip on" aria-label="Wochentage {{{hero_weekdays_text}}}" title="Wochentage {{{hero_weekdays_text}}}">
+              <span class="hero-setting-label">Wochentage</span>
+              <span class="hero-setting-status">{{{hero_weekdays_text}}}</span>
             </div>
           </div>
         </section>

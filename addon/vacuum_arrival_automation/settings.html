@@ -1,0 +1,1318 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vacuum Automation Einstellungen</title>
+  <link rel="stylesheet" href="/static/leaflet.css">
+  <style>
+    :root {
+      --bg: #f4f6f5;
+      --panel: #ffffff;
+      --panel-soft: #f0f3f2;
+      --ink: #17201b;
+      --muted: #63706a;
+      --line: #dde4e0;
+      --accent: #227a55;
+      --accent-soft: #e4f3ec;
+      --accent-strong: #145b3d;
+      --warning: #a76522;
+      --warning-soft: #fef6e6;
+      --danger: #b24c3d;
+      --danger-soft: #fef2f0;
+      --shadow: 0 2px 8px rgba(21, 32, 25, 0.06);
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      line-height: 1.4;
+    }
+    button,
+    input {
+      font: inherit;
+    }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .settings-title {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .settings-title h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+    .settings-title span {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .back-button {
+      display: inline-grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--ink);
+      text-decoration: none;
+      box-shadow: var(--shadow);
+      flex: 0 0 auto;
+    }
+    .tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 16px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .tab-button {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--muted);
+      padding: 7px 12px;
+      font-size: 13px;
+      font-weight: 750;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .tab-button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .settings-stack {
+      display: grid;
+      gap: 16px;
+    }
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 3px;
+      margin-bottom: 12px;
+    }
+    .section-header h2 {
+      margin: 0;
+      font-size: 15px;
+      color: var(--ink);
+    }
+    .section-header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .section-hint {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-align: right;
+    }
+    .settings-list,
+    .number-list,
+    .room-list,
+    .system-list {
+      display: grid;
+      gap: 10px;
+    }
+    .setting-row,
+    .number-row,
+    .system-action {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-soft);
+    }
+    .setting-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) max-content;
+      align-items: center;
+    }
+    .setting-copy,
+    .number-row > span,
+    .system-action > div {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+    strong {
+      font-size: 14px;
+      color: var(--ink);
+    }
+    .setting-copy span,
+    .number-row small,
+    .system-action span,
+    .room-settings-head span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    code { display: none; }
+    .switch {
+      display: inline-grid;
+      grid-template-columns: 44px auto;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+    .switch input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .switch span {
+      width: 44px;
+      height: 24px;
+      border-radius: 999px;
+      background: var(--line);
+      position: relative;
+      transition: background 160ms ease;
+    }
+    .switch span::after {
+      content: "";
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      left: 3px;
+      top: 3px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      transition: transform 160ms ease;
+    }
+    .switch input:checked + span {
+      background: var(--accent);
+    }
+    .switch input:checked + span::after {
+      transform: translateX(20px);
+    }
+    .switch em {
+      color: var(--muted);
+      font-size: 12px;
+      font-style: normal;
+      font-weight: 750;
+    }
+    .setting-row.primary {
+      background: var(--accent-soft);
+      border-color: rgba(34, 122, 85, 0.3);
+      box-shadow: inset 4px 0 0 var(--accent);
+    }
+    .setting-row.primary strong {
+      color: var(--accent-strong);
+    }
+    .number-row input {
+      width: 112px;
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--ink);
+      padding: 6px 8px;
+      text-align: right;
+      flex: 0 0 auto;
+    }
+    .number-row.saving,
+    .setting-row.saving,
+    .weekday-row.saving {
+      opacity: 0.68;
+    }
+    .weekday-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) max-content;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-soft);
+    }
+    .weekday-row > div:first-child {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+    .weekday-row span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .weekday-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+    .weekday-button {
+      min-width: 34px;
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--muted);
+      padding: 5px 8px;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .weekday-button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .room-settings-card {
+      display: grid;
+      gap: 12px;
+      position: relative;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .room-settings-card.inactive {
+      background: #f1f4f2;
+      border-color: #d9e2dd;
+      color: var(--muted);
+    }
+    .room-settings-card.inactive strong {
+      color: #53615b;
+    }
+    .room-settings-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding-right: 34px;
+    }
+    .room-settings-head > div {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+      flex: 1;
+    }
+    .room-title-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .room-settings-card.dragging {
+      display: none;
+    }
+    .room-drop-placeholder {
+      min-height: 74px;
+      border: 2px dashed rgba(34, 122, 85, 0.42);
+      border-radius: 8px;
+      background: rgba(34, 122, 85, 0.08);
+      transition: min-height 120ms ease;
+    }
+    .room-settings-grid {
+      display: grid;
+      gap: 6px;
+    }
+    .room-drag-cue {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 28px;
+      height: 30px;
+      color: rgba(99, 112, 106, 0.78);
+      cursor: grab;
+      touch-action: none;
+    }
+    .room-drag-cue:active {
+      cursor: grabbing;
+    }
+    .room-drag-cue::before {
+      content: "";
+      position: absolute;
+      top: 5px;
+      left: 7px;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow:
+        10px 0 currentColor,
+        0 8px currentColor,
+        10px 8px currentColor,
+        0 16px currentColor,
+        10px 16px currentColor;
+    }
+    .room-interval-row {
+      min-height: 42px;
+      padding: 8px 10px;
+      background: var(--panel-soft);
+    }
+    .room-interval-row small {
+      display: none;
+    }
+    .room-interval-row input {
+      width: 96px;
+      min-height: 30px;
+    }
+    .room-interval-unit {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      margin-left: -4px;
+    }
+    .status-button,
+    .system-action button {
+      min-height: 24px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--ink);
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 750;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .status-button.on {
+      background: var(--accent-soft);
+      border-color: rgba(34, 122, 85, 0.25);
+      color: var(--accent-strong);
+    }
+    .system-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 0.6fr) minmax(0, 1fr);
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--panel-soft);
+      align-items: center;
+    }
+    .system-row span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .system-row strong {
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .empty {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      padding: 12px;
+      background: var(--panel-soft);
+      border-radius: 8px;
+    }
+    .map-card {
+      display: grid;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-soft);
+    }
+    .map-canvas {
+      position: relative;
+      min-height: 280px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #dfe8e4;
+    }
+    .map-canvas .leaflet-container,
+    .map-canvas {
+      font: inherit;
+    }
+    .leaflet-control-attribution {
+      font-size: 10px;
+    }
+    .radius-handle-icon {
+      width: 18px !important;
+      height: 18px !important;
+      margin-left: -9px !important;
+      margin-top: -9px !important;
+      border: 3px solid #fff;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 3px 10px rgba(21, 32, 25, 0.24);
+    }
+    .home-marker-icon {
+      width: 16px !important;
+      height: 16px !important;
+      margin-left: -8px !important;
+      margin-top: -8px !important;
+      background: transparent;
+      border: 0;
+    }
+    .home-marker-icon span {
+      position: absolute;
+      inset: 0;
+      border: 3px solid #fff;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow:
+        0 0 0 2px rgba(20, 91, 61, 0.36),
+        0 4px 12px rgba(21, 32, 25, 0.24);
+    }
+    .home-marker-icon span::after {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border-radius: 50%;
+      background: #fff;
+    }
+    .fallback-map {
+      background:
+        linear-gradient(35deg, rgba(34, 122, 85, 0.13), transparent 40%),
+        linear-gradient(145deg, transparent 42%, rgba(99, 112, 106, 0.15) 43%, transparent 48%),
+        linear-gradient(rgba(99, 112, 106, 0.16) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99, 112, 106, 0.16) 1px, transparent 1px),
+        #dfe8e4;
+      background-size: auto, auto, 58px 58px, 58px 58px, auto;
+      cursor: grab;
+      touch-action: none;
+    }
+    .fallback-radius {
+      position: absolute;
+      border: 2px solid rgba(34, 122, 85, 0.58);
+      border-radius: 50%;
+      background: rgba(34, 122, 85, 0.14);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .fallback-radius-handle {
+      position: absolute;
+      right: -9px;
+      top: 50%;
+      width: 18px;
+      height: 18px;
+      border: 3px solid #fff;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 3px 10px rgba(21, 32, 25, 0.24);
+      transform: translateY(-50%);
+      cursor: ew-resize;
+      pointer-events: auto;
+    }
+    .fallback-marker {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border: 3px solid #fff;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow:
+        0 0 0 2px rgba(20, 91, 61, 0.36),
+        0 4px 12px rgba(21, 32, 25, 0.24);
+      transform: translate(-50%, -50%);
+      cursor: grab;
+    }
+    .fallback-marker::after {
+      content: "";
+      position: absolute;
+      inset: 4px;
+      border-radius: 50%;
+      background: #fff;
+    }
+    .fallback-radius-guide {
+      position: absolute;
+      height: 0;
+      border-top: 2px dashed rgba(20, 91, 61, 0.72);
+      transform-origin: left center;
+      pointer-events: none;
+    }
+    .map-actions {
+      display: grid;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .map-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      min-width: 0;
+    }
+    .map-meta span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .map-meta span:last-child {
+      text-align: right;
+      flex: 0 0 auto;
+    }
+    .map-actions button {
+      min-height: 34px;
+      border: 1px solid var(--accent);
+      border-radius: 7px;
+      background: var(--accent);
+      color: #fff;
+      padding: 7px 12px;
+      font-size: 13px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      max-width: calc(100vw - 32px);
+      padding: 9px 12px;
+      border-radius: 8px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+    @media (max-width: 900px) {
+      .settings-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    @media (max-width: 640px) {
+      .shell {
+        padding: 16px;
+      }
+      .settings-header {
+        align-items: flex-start;
+      }
+      .settings-title h1 {
+        font-size: 21px;
+      }
+      .number-row,
+      .weekday-row,
+      .system-action,
+      .room-settings-head {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .weekday-row {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+      .weekday-buttons {
+        justify-content: flex-start;
+      }
+      .room-title-line {
+        align-items: flex-start;
+      }
+      .switch {
+        width: 100%;
+        grid-template-columns: 44px 1fr;
+      }
+      .number-row input {
+        width: 100%;
+        text-align: left;
+      }
+      .room-interval-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        align-items: center;
+      }
+      .system-row {
+        grid-template-columns: 1fr;
+        gap: 3px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="settings-header">
+      <div class="settings-title">
+        <h1>Einstellungen</h1>
+        <span>Automation, Rückkehrlogik, Räume und Systemstatus</span>
+      </div>
+      <a class="back-button" href="/" aria-label="Zurück zum Dashboard" title="Zurück zum Dashboard">←</a>
+    </header>
+
+    <nav class="tabs" aria-label="Einstellungsbereiche">
+      <button class="tab-button active" type="button" data-tab="general">Allgemein</button>
+      <button class="tab-button" type="button" data-tab="return">Reise & Rückkehr</button>
+      <button class="tab-button" type="button" data-tab="rooms">Räume</button>
+      <button class="tab-button" type="button" data-tab="push">Push</button>
+      <button class="tab-button" type="button" data-tab="system">System</button>
+    </nav>
+
+    <section class="tab-panel active" data-panel="general">
+      <section class="section">
+        <div class="section-header">
+          <h2>Grundsteuerung</h2>
+        </div>
+          <div class="settings-list">
+            {{{settings_toggles}}}
+          </div>
+          <div class="number-list" style="margin-top: 10px;">
+            {{{settings_schedule}}}
+            {{{settings_weekdays}}}
+          </div>
+      </section>
+    </section>
+
+    <section class="tab-panel" data-panel="return">
+      <section class="section">
+        <div class="section-header">
+          <h2>Reiselogik</h2>
+        </div>
+        <div class="settings-list">
+          {{{settings_travel_toggle}}}
+        </div>
+      </section>
+      <section class="section">
+        <div class="section-header">
+          <h2>Zuhause & Reiseradius</h2>
+        </div>
+        {{{settings_home_map}}}
+      </section>
+      <section class="section">
+        <div class="section-header">
+          <h2>Rückkehr</h2>
+        </div>
+        <div class="number-list">
+          {{{settings_numbers}}}
+        </div>
+      </section>
+    </section>
+
+    <section class="tab-panel" data-panel="rooms">
+      <section class="section">
+        <div class="section-header">
+          <h2>Räume</h2>
+          <span class="section-hint">Priorität per Ziehen ändern</span>
+        </div>
+        <div class="room-list">
+          {{{settings_rooms}}}
+        </div>
+      </section>
+    </section>
+
+    <section class="tab-panel" data-panel="push">
+      <section class="section">
+        <div class="section-header">
+          <h2>Push</h2>
+        </div>
+        <div class="settings-list">
+          {{{settings_push}}}
+        </div>
+      </section>
+    </section>
+
+    <section class="tab-panel" data-panel="system">
+      <section class="section">
+        <div class="section-header">
+          <h2>System</h2>
+          <p>Konfigurierte Quellen und Wartungsaktionen.</p>
+        </div>
+        <div class="system-list">
+          {{{settings_system}}}
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" data-toast role="status" aria-live="polite"></div>
+
+  <script src="/static/leaflet.js"></script>
+  <script>
+    const toast = document.querySelector("[data-toast]");
+    let toastTimer = null;
+    let refreshHomeMap = () => {};
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("visible");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("visible"), 1800);
+    }
+
+    async function postJson(path, payload = null) {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload === null ? null : JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    }
+
+    document.querySelectorAll("[data-tab]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const tab = button.dataset.tab;
+        document.querySelectorAll("[data-tab]").forEach((item) => {
+          item.classList.toggle("active", item.dataset.tab === tab);
+        });
+        document.querySelectorAll("[data-panel]").forEach((panel) => {
+          panel.classList.toggle("active", panel.dataset.panel === tab);
+        });
+        if (tab === "return") {
+          requestAnimationFrame(() => refreshHomeMap());
+          setTimeout(refreshHomeMap, 180);
+        }
+      });
+    });
+
+    document.addEventListener("change", async (event) => {
+      const toggle = event.target.closest("[data-toggle-entity]");
+      if (!toggle) return;
+      const entityId = toggle.dataset.toggleEntity;
+      const row = toggle.closest(".setting-row, .room-settings-card");
+      row?.classList.add("saving");
+      try {
+        await postJson(`/api/toggle?entity_id=${encodeURIComponent(entityId)}`);
+        showToast("Gespeichert");
+        row?.classList.remove("saving");
+      } catch (error) {
+        showToast("Konnte nicht speichern");
+        window.location.reload();
+      }
+    });
+
+    document.addEventListener("blur", async (event) => {
+      const input = event.target.closest("[data-number-entity]");
+      if (!input) return;
+      const entityId = input.dataset.numberEntity;
+      const row = input.closest(".number-row");
+      let value = Number(input.value);
+      if (input.dataset.settingKey === "interval_days") {
+        value = Number(input.value) * 24;
+      } else if (input.type === "time") {
+        value = Number(String(input.value || "0").split(":")[0]);
+      }
+      row?.classList.add("saving");
+      try {
+        await postJson("/api/set_number", {
+          entity_id: entityId,
+          value
+        });
+        showToast("Gespeichert");
+        row?.classList.remove("saving");
+      } catch (error) {
+        showToast("Konnte nicht speichern");
+        row?.classList.remove("saving");
+      }
+    }, true);
+
+    document.addEventListener("keydown", (event) => {
+      const input = event.target.closest("[data-number-entity]");
+      if (!input || event.key !== "Enter") return;
+      input.blur();
+    });
+
+    document.addEventListener("click", async (event) => {
+      const weekdayButton = event.target.closest("[data-weekday]");
+      if (weekdayButton) {
+        const row = weekdayButton.closest("[data-weekdays]");
+        const buttons = Array.from(row.querySelectorAll("[data-weekday]"));
+        weekdayButton.classList.toggle("active");
+        weekdayButton.setAttribute("aria-pressed", weekdayButton.classList.contains("active") ? "true" : "false");
+        const value = buttons
+          .filter((button) => button.classList.contains("active"))
+          .map((button) => button.dataset.weekday)
+          .join(",");
+        row.classList.add("saving");
+        try {
+          await postJson("/api/set_text", {
+            entity_id: row.dataset.weekdaysEntity,
+            value
+          });
+          showToast("Gespeichert");
+          row.classList.remove("saving");
+        } catch (error) {
+          showToast("Konnte nicht speichern");
+          window.location.reload();
+        }
+        return;
+      }
+
+      const toggleButton = event.target.closest("button[data-toggle-entity]");
+      if (toggleButton) {
+        const wasActive = toggleButton.classList.contains("on");
+        toggleButton.classList.add("saving");
+        try {
+          await postJson(`/api/toggle?entity_id=${encodeURIComponent(toggleButton.dataset.toggleEntity)}`);
+          toggleButton.classList.toggle("on", !wasActive);
+          toggleButton.textContent = wasActive ? "Inaktiv" : "Aktiv";
+          showToast("Gespeichert");
+          toggleButton.classList.remove("saving");
+        } catch (error) {
+          showToast("Konnte nicht speichern");
+          toggleButton.classList.remove("saving");
+        }
+        return;
+      }
+
+      const clearText = event.target.closest("[data-clear-text]");
+      if (clearText) {
+        try {
+          await postJson("/api/set_text", {
+            entity_id: clearText.dataset.clearText,
+            value: ""
+          });
+          showToast("Override zurückgesetzt");
+          window.location.reload();
+        } catch (error) {
+          showToast("Konnte Override nicht zurücksetzen");
+        }
+      }
+    });
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function initHomeMap() {
+      const card = document.querySelector("[data-home-map]");
+      if (!card) return;
+      if (typeof L === "undefined") {
+        initFallbackHomeMap(card);
+        return;
+      }
+
+      const canvas = card.querySelector("[data-map-canvas]");
+      const latInput = card.querySelector("[data-map-lat]");
+      const lngInput = card.querySelector("[data-map-lng]");
+      const radiusInput = card.querySelector("[data-map-radius-input]");
+      const coordinates = card.querySelector("[data-map-coordinates]");
+      const status = card.querySelector("[data-map-status]");
+      const minRadiusKm = 100;
+      const center = [
+        Number(latInput.value) || 0,
+        Number(lngInput.value) || 0
+      ];
+
+      function configuredRadiusKm() {
+        return Math.max(0, Number(radiusInput.value) || 0);
+      }
+
+      function visibleRadiusKm() {
+        return Math.max(minRadiusKm, configuredRadiusKm() || minRadiusKm);
+      }
+
+      const initialZoom = 9;
+      let focusedHomePoint = false;
+      const leafletMap = L.map(canvas, {
+        zoomControl: true,
+        scrollWheelZoom: true,
+        tap: true
+      }).setView(center, initialZoom);
+
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap"
+      }).addTo(leafletMap);
+
+      const homeIcon = L.divIcon({
+        className: "home-marker-icon",
+        html: "<span aria-hidden=\"true\"></span>",
+        iconSize: [16, 16],
+        iconAnchor: [8, 8]
+      });
+      const marker = L.marker(center, { draggable: true, icon: homeIcon }).addTo(leafletMap);
+      const circle = L.circle(center, {
+        radius: visibleRadiusKm() * 1000,
+        color: "#227a55",
+        weight: 2,
+        fillColor: "#227a55",
+        fillOpacity: 0.14
+      }).addTo(leafletMap);
+      const radiusGuide = L.polyline([center, center], {
+        color: "#145b3d",
+        dashArray: "6 8",
+        interactive: false,
+        opacity: 0.72,
+        weight: 2
+      }).addTo(leafletMap);
+      const handleIcon = L.divIcon({
+        className: "radius-handle-icon",
+        iconSize: [18, 18],
+        iconAnchor: [9, 9]
+      });
+      const radiusHandle = L.marker(center, {
+        draggable: true,
+        icon: handleIcon,
+        zIndexOffset: 1000
+      }).addTo(leafletMap);
+
+      function destinationEast(latLng, distanceKm) {
+        const earthRadiusKm = 6371;
+        const bearing = Math.PI / 2;
+        const distance = distanceKm / earthRadiusKm;
+        const lat1 = latLng.lat * Math.PI / 180;
+        const lng1 = latLng.lng * Math.PI / 180;
+        const lat2 = Math.asin(
+          Math.sin(lat1) * Math.cos(distance) +
+          Math.cos(lat1) * Math.sin(distance) * Math.cos(bearing)
+        );
+        const lng2 = lng1 + Math.atan2(
+          Math.sin(bearing) * Math.sin(distance) * Math.cos(lat1),
+          Math.cos(distance) - Math.sin(lat1) * Math.sin(lat2)
+        );
+        return L.latLng(lat2 * 180 / Math.PI, lng2 * 180 / Math.PI);
+      }
+
+      function updateStatus() {
+        const configured = configuredRadiusKm();
+        const visible = visibleRadiusKm();
+        const coordinateText = [Number(latInput.value), Number(lngInput.value)]
+          .map((value) => value.toLocaleString("de-DE", { maximumFractionDigits: 6 }))
+          .join(" · ");
+        const radiusText = configured > 0 && configured < minRadiusKm
+          ? `Radius ${configured.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km · Karte zeigt min. ${minRadiusKm} km`
+          : `Radius ${visible.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`;
+        coordinates.textContent = coordinateText;
+        status.textContent = radiusText;
+      }
+
+      function syncCircle(options = {}) {
+        const centerLatLng = marker.getLatLng();
+        const radiusKm = visibleRadiusKm();
+        latInput.value = centerLatLng.lat.toFixed(6);
+        lngInput.value = centerLatLng.lng.toFixed(6);
+        circle.setLatLng(centerLatLng);
+        circle.setRadius(radiusKm * 1000);
+        const handleLatLng = destinationEast(centerLatLng, radiusKm);
+        radiusHandle.setLatLng(handleLatLng);
+        radiusGuide.setLatLngs([centerLatLng, handleLatLng]);
+        updateStatus();
+        if (options.fit) {
+          leafletMap.invalidateSize();
+          leafletMap.fitBounds(circle.getBounds(), { padding: [24, 24], animate: true });
+        }
+      }
+
+      marker.on("drag", () => syncCircle());
+      marker.on("dragend", () => syncCircle());
+
+      radiusHandle.on("drag", () => {
+        const radiusKm = Math.max(minRadiusKm, marker.getLatLng().distanceTo(radiusHandle.getLatLng()) / 1000);
+        radiusInput.value = radiusKm.toFixed(1);
+        circle.setRadius(radiusKm * 1000);
+        radiusGuide.setLatLngs([marker.getLatLng(), radiusHandle.getLatLng()]);
+        updateStatus();
+      });
+      radiusHandle.on("dragend", () => syncCircle({ fit: true }));
+
+      leafletMap.on("click", (event) => {
+        marker.setLatLng(event.latlng);
+        syncCircle();
+      });
+
+      refreshHomeMap = () => {
+        leafletMap.invalidateSize();
+        syncCircle();
+        if (!focusedHomePoint) {
+          leafletMap.setView(marker.getLatLng(), initialZoom, { animate: false });
+          focusedHomePoint = true;
+        }
+      };
+      requestAnimationFrame(refreshHomeMap);
+      setTimeout(refreshHomeMap, 180);
+
+      card.querySelector("[data-save-map]").addEventListener("click", async () => {
+        try {
+          await postJson("/api/set_number", { entity_id: card.dataset.latEntity, value: Number(latInput.value) });
+          await postJson("/api/set_number", { entity_id: card.dataset.lngEntity, value: Number(lngInput.value) });
+          await postJson("/api/set_number", { entity_id: card.dataset.radiusEntity, value: configuredRadiusKm() });
+          showToast("Karte gespeichert");
+        } catch (error) {
+          showToast("Karte konnte nicht gespeichert werden");
+        }
+      });
+    }
+
+    initHomeMap();
+
+    function initFallbackHomeMap(card) {
+      const canvas = card.querySelector("[data-map-canvas]");
+      const latInput = card.querySelector("[data-map-lat]");
+      const lngInput = card.querySelector("[data-map-lng]");
+      const radiusInput = card.querySelector("[data-map-radius-input]");
+      const coordinates = card.querySelector("[data-map-coordinates]");
+      const status = card.querySelector("[data-map-status]");
+      const minRadiusKm = 100;
+      let scale = 1.2;
+      let draggingMarker = false;
+      let resizingRadius = false;
+      let panning = false;
+      let panStart = null;
+      let center = { x: 0, y: 0 };
+      let markerPoint = { x: 0, y: 0 };
+
+      canvas.classList.add("fallback-map");
+      canvas.innerHTML = `
+        <div class="fallback-radius" data-fallback-radius>
+          <button class="fallback-radius-handle" type="button" data-fallback-radius-handle aria-label="Reise-Radius ändern"></button>
+        </div>
+        <div class="fallback-radius-guide" data-fallback-radius-guide></div>
+        <button class="fallback-marker" type="button" data-fallback-marker aria-label="Home-Punkt verschieben"></button>
+      `;
+      const marker = canvas.querySelector("[data-fallback-marker]");
+      const radius = canvas.querySelector("[data-fallback-radius]");
+      const guide = canvas.querySelector("[data-fallback-radius-guide]");
+      const handle = canvas.querySelector("[data-fallback-radius-handle]");
+
+      function configuredRadiusKm() {
+        return Math.max(0, Number(radiusInput.value) || 0);
+      }
+
+      function visibleRadiusKm() {
+        return Math.max(minRadiusKm, configuredRadiusKm() || minRadiusKm);
+      }
+
+      function resetPoints() {
+        const rect = canvas.getBoundingClientRect();
+        center = { x: rect.width / 2, y: rect.height / 2 };
+        markerPoint = { ...center };
+        scale = Math.max(0.35, Math.min(rect.width, rect.height) / (visibleRadiusKm() * 2.35));
+      }
+
+      function updateStatus() {
+        const configured = configuredRadiusKm();
+        const visible = visibleRadiusKm();
+        const coordinateText = [Number(latInput.value), Number(lngInput.value)]
+          .map((value) => value.toLocaleString("de-DE", { maximumFractionDigits: 6 }))
+          .join(" · ");
+        const radiusText = configured > 0 && configured < minRadiusKm
+          ? `Radius ${configured.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km · Karte zeigt min. ${minRadiusKm} km`
+          : `Radius ${visible.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`;
+        coordinates.textContent = coordinateText;
+        status.textContent = radiusText;
+      }
+
+      function updateFallback() {
+        const radiusPx = visibleRadiusKm() * scale * 2;
+        marker.style.left = `${markerPoint.x}px`;
+        marker.style.top = `${markerPoint.y}px`;
+        radius.style.left = `${markerPoint.x}px`;
+        radius.style.top = `${markerPoint.y}px`;
+        radius.style.width = `${radiusPx}px`;
+        radius.style.height = `${radiusPx}px`;
+        guide.style.left = `${markerPoint.x}px`;
+        guide.style.top = `${markerPoint.y}px`;
+        guide.style.width = `${radiusPx / 2}px`;
+        updateStatus();
+      }
+
+      function pointToInputs(point) {
+        const kmPerDegreeLat = 111.32;
+        const kmPerDegreeLng = Math.max(12, 111.32 * Math.cos((Number(latInput.value) || 0) * Math.PI / 180));
+        latInput.value = (Number(latInput.value) - (point.y - markerPoint.y) / scale / kmPerDegreeLat).toFixed(6);
+        lngInput.value = (Number(lngInput.value) + (point.x - markerPoint.x) / scale / kmPerDegreeLng).toFixed(6);
+      }
+
+      marker.addEventListener("pointerdown", (event) => {
+        draggingMarker = true;
+        marker.setPointerCapture(event.pointerId);
+      });
+      marker.addEventListener("pointermove", (event) => {
+        if (!draggingMarker) return;
+        const rect = canvas.getBoundingClientRect();
+        const nextPoint = {
+          x: clamp(event.clientX - rect.left, 12, rect.width - 12),
+          y: clamp(event.clientY - rect.top, 12, rect.height - 12)
+        };
+        pointToInputs(nextPoint);
+        markerPoint = nextPoint;
+        updateFallback();
+      });
+      marker.addEventListener("pointerup", () => {
+        draggingMarker = false;
+      });
+
+      handle.addEventListener("pointerdown", (event) => {
+        resizingRadius = true;
+        handle.setPointerCapture(event.pointerId);
+      });
+      handle.addEventListener("pointermove", (event) => {
+        if (!resizingRadius) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = clamp(event.clientX - rect.left, 0, rect.width);
+        const y = clamp(event.clientY - rect.top, 0, rect.height);
+        const distancePx = Math.hypot(x - markerPoint.x, y - markerPoint.y);
+        radiusInput.value = Math.max(minRadiusKm, distancePx / scale).toFixed(1);
+        updateFallback();
+      });
+      handle.addEventListener("pointerup", () => {
+        resizingRadius = false;
+        resetPoints();
+        updateFallback();
+      });
+
+      canvas.addEventListener("pointerdown", (event) => {
+        if (event.target === marker || event.target === handle) return;
+        panning = true;
+        panStart = { x: event.clientX, y: event.clientY };
+        canvas.setPointerCapture(event.pointerId);
+      });
+      canvas.addEventListener("pointermove", (event) => {
+        if (!panning || !panStart) return;
+        const dx = event.clientX - panStart.x;
+        const dy = event.clientY - panStart.y;
+        markerPoint.x += dx;
+        markerPoint.y += dy;
+        center.x += dx;
+        center.y += dy;
+        panStart = { x: event.clientX, y: event.clientY };
+        updateFallback();
+      });
+      canvas.addEventListener("pointerup", () => {
+        panning = false;
+        panStart = null;
+      });
+
+      card.querySelector("[data-save-map]").addEventListener("click", async () => {
+        try {
+          await postJson("/api/set_number", { entity_id: card.dataset.latEntity, value: Number(latInput.value) });
+          await postJson("/api/set_number", { entity_id: card.dataset.lngEntity, value: Number(lngInput.value) });
+          await postJson("/api/set_number", { entity_id: card.dataset.radiusEntity, value: configuredRadiusKm() });
+          showToast("Karte gespeichert");
+        } catch (error) {
+          showToast("Karte konnte nicht gespeichert werden");
+        }
+      });
+
+      resetPoints();
+      updateFallback();
+    }
+
+    function initRoomDrag() {
+      const list = document.querySelector('[data-panel="rooms"] .room-list');
+      if (!list) return;
+      let dragged = null;
+      let placeholder = null;
+      let initialOrder = "";
+
+      function updateRanks() {
+        list.querySelectorAll("[data-room-card]").forEach((card, index) => {
+          const rank = card.querySelector(".room-settings-head strong span");
+          if (rank) rank.textContent = `${index + 1}.`;
+        });
+      }
+
+      function roomOrder() {
+        return Array.from(list.querySelectorAll("[data-room-card]"))
+          .map((card) => card.dataset.roomKey || "")
+          .join("|");
+      }
+
+      function createPlaceholder(card) {
+        const marker = document.createElement("div");
+        marker.className = "room-drop-placeholder";
+        marker.style.minHeight = `${card.getBoundingClientRect().height}px`;
+        return marker;
+      }
+
+      function cardAfterPointer(y) {
+        const cards = Array.from(list.querySelectorAll("[data-room-card]:not(.dragging)"));
+        return cards.reduce((closest, card) => {
+          const rect = card.getBoundingClientRect();
+          const offset = y - rect.top - rect.height / 2;
+          if (offset < 0 && offset > closest.offset) {
+            return { offset, card };
+          }
+          return closest;
+        }, { offset: Number.NEGATIVE_INFINITY, card: null }).card;
+      }
+
+      function finishDrag(saveOrder) {
+        if (dragged && placeholder?.parentNode) {
+          if (saveOrder) placeholder.parentNode.insertBefore(dragged, placeholder);
+          placeholder.remove();
+        }
+        dragged?.classList.remove("dragging");
+        const changed = saveOrder && initialOrder && roomOrder() !== initialOrder;
+        dragged = null;
+        placeholder = null;
+        initialOrder = "";
+        if (changed) {
+          updateRanks();
+          showToast("Reihenfolge aktualisiert");
+        }
+      }
+
+      list.addEventListener("dragstart", (event) => {
+        const grip = event.target.closest(".room-drag-cue");
+        if (!grip) return;
+        const card = grip.closest("[data-room-card]");
+        if (!card) return;
+        dragged = card;
+        initialOrder = roomOrder();
+        placeholder = createPlaceholder(card);
+        card.after(placeholder);
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", card.dataset.roomKey || "");
+        const rect = card.getBoundingClientRect();
+        event.dataTransfer.setDragImage(card, event.clientX - rect.left, event.clientY - rect.top);
+        requestAnimationFrame(() => card.classList.add("dragging"));
+      });
+
+      list.addEventListener("dragend", () => finishDrag(false));
+
+      list.addEventListener("dragover", (event) => {
+        if (!dragged) return;
+        event.preventDefault();
+        const nextCard = cardAfterPointer(event.clientY);
+        if (nextCard) {
+          list.insertBefore(placeholder, nextCard);
+        } else {
+          list.appendChild(placeholder);
+        }
+      });
+
+      list.addEventListener("drop", (event) => {
+        if (!dragged) return;
+        event.preventDefault();
+        finishDrag(true);
+      });
+    }
+
+    initRoomDrag();
+  </script>
+</body>
+</html>

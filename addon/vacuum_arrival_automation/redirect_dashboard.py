@@ -25,14 +25,32 @@ LOCAL_DEV_ENV = "VACUUM_DASHBOARD_DEV"
 LOCAL_OPTIONS_ENV = "VACUUM_DASHBOARD_OPTIONS"
 LOCAL_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 LOCAL_DASHBOARD_PATH = Path(__file__).with_name("dashboard.html")
+LOCAL_SETTINGS_PATH = Path(__file__).with_name("settings.html")
+LOCAL_STATIC_PATH = Path(__file__).with_name("static")
 MOCK_STATES: dict[str, dict] | None = None
 ADDON_NAME = "Vacuum Arrival Automation"
+WEEKDAY_OPTIONS = [
+    ("mon", "Mo"),
+    ("tue", "Di"),
+    ("wed", "Mi"),
+    ("thu", "Do"),
+    ("fri", "Fr"),
+    ("sat", "Sa"),
+    ("sun", "So"),
+]
+DEFAULT_ACTIVE_WEEKDAYS = "mon,tue,wed,thu,fri,sat"
 
 
 def load_dashboard_template() -> str:
     if LOCAL_DASHBOARD_PATH.exists():
         return LOCAL_DASHBOARD_PATH.read_text(encoding="utf-8")
     return HTML
+
+
+def load_settings_template() -> str:
+    if LOCAL_SETTINGS_PATH.exists():
+        return LOCAL_SETTINGS_PATH.read_text(encoding="utf-8")
+    return SETTINGS_HTML
 
 
 def local_dev_enabled() -> bool:
@@ -241,6 +259,10 @@ def helper_entities(options: dict, rooms: List[dict]) -> Dict[str, Any]:
                 "one_time_room_override_entity",
                 f"input_text.{helper_prefix}_one_time_room_override",
             ),
+            "active_weekdays": options.get(
+                "active_weekdays_entity",
+                f"input_text.{helper_prefix}_active_weekdays",
+            ),
             "start_hour": options.get(
                 "start_hour_entity", f"input_number.{helper_prefix}_start_hour"
             ),
@@ -321,6 +343,8 @@ def mock_states() -> dict[str, dict]:
             value = options.get("travel_pause_radius_km", 25)
         elif key == "max_distance_km":
             value = options.get("max_distance_km", 0)
+        elif key == "active_weekdays":
+            value = options.get("active_weekdays", DEFAULT_ACTIVE_WEEKDAYS)
         else:
             value = "unknown"
         states[entity_id] = mock_state(entity_id, value)
@@ -1648,20 +1672,18 @@ def render_dashboard_html() -> str:
 
     start_push_on = is_on(global_states.get("start_push"))
     return_push_on = is_on(global_states.get("return_push"))
-    learning_on = is_on(global_states.get("learning"))
     travel_on = is_on(global_states.get("travel_logic"))
-    return_guard_on = not home_people
+    start_hour = number_value(state_value(global_states.get("start_hour"), ""), summary.get("status", {}).get("time_window", {}).get("start_hour", 8))
+    end_hour = number_value(state_value(global_states.get("end_hour"), ""), summary.get("status", {}).get("time_window", {}).get("end_hour", 22))
+    schedule_text = f"{int(start_hour or 0):02d}:00-{int(end_hour or 0):02d}:00"
+    weekdays_text = format_active_weekdays(summary)
 
     hero_start_push_class = "on" if start_push_on else ""
     hero_start_push_text = "Aktiv" if start_push_on else "Inaktiv"
     hero_return_push_class = "on" if return_push_on else ""
     hero_return_push_text = "Aktiv" if return_push_on else "Inaktiv"
-    hero_learning_class = "on" if learning_on else ""
-    hero_learning_text = "Aktiv" if learning_on else "Inaktiv"
     hero_travel_class = "on" if travel_on else ""
     hero_travel_text = "Aktiv" if travel_on else "Inaktiv"
-    hero_return_guard_class = "on" if return_guard_on else ""
-    hero_return_guard_text = "Aktiv" if return_guard_on else "Inaktiv"
 
     replacements = {
         "hero_status_icon": hero_status_icon,
@@ -1674,12 +1696,10 @@ def render_dashboard_html() -> str:
         "hero_start_push_text": hero_start_push_text,
         "hero_return_push_class": hero_return_push_class,
         "hero_return_push_text": hero_return_push_text,
-        "hero_learning_class": hero_learning_class,
-        "hero_learning_text": hero_learning_text,
         "hero_travel_class": hero_travel_class,
         "hero_travel_text": hero_travel_text,
-        "hero_return_guard_class": hero_return_guard_class,
-        "hero_return_guard_text": hero_return_guard_text,
+        "hero_schedule_text": schedule_text,
+        "hero_weekdays_text": weekdays_text,
         "robot_summary": robot_summary,
         "robot_alerts": render_robot_alerts(summary),
         "presence_summary": presence_summary,
@@ -1701,6 +1721,320 @@ def render_dashboard_html() -> str:
         output = output.replace("{{{" + key + "}}}", str(value))
         output = output.replace("{{" + key + "}}", escape(value))
     return output
+
+
+def render_setting_toggle(key: str, title: str, description: str, entity_id: str, state: Any) -> str:
+    active = bool_on(state)
+    checked = "checked" if active else ""
+    status = "Aktiv" if active else "Inaktiv"
+    highlight_class = " primary" if key == "enabled" else ""
+    return f"""
+      <article class="setting-row{highlight_class}">
+        <div class="setting-copy">
+          <strong>{escape(title)}</strong>
+          <span>{escape(description)}</span>
+        </div>
+        <label class="switch" aria-label="{escape(title)}">
+          <input type="checkbox" data-toggle-entity="{escape(entity_id)}" data-setting-key="{escape(key)}" {checked}>
+          <span></span>
+          <em>{escape(status)}</em>
+        </label>
+      </article>
+    """
+
+
+def render_setting_number(key: str, title: str, description: str, entity_id: str, state: Any, step: str = "1") -> str:
+    value = state_value(state, "")
+    input_type = "time" if key in {"start_hour", "end_hour"} else "number"
+    display_value = value
+    if input_type == "time":
+        hour = int(number_value(value, 0) or 0)
+        hour = max(0, min(23, hour))
+        display_value = f"{hour:02d}:00"
+    return f"""
+      <label class="number-row">
+        <span>
+          <strong>{escape(title)}</strong>
+          <small>{escape(description)}</small>
+        </span>
+        <input type="{input_type}" step="{escape(step)}" value="{escape(display_value)}" data-number-entity="{escape(entity_id)}" data-setting-key="{escape(key)}">
+      </label>
+    """
+
+
+def render_settings_toggles(summary: dict) -> str:
+    global_entities = summary.get("entities", {}).get("global", {})
+    global_states = summary.get("states", {}).get("global", {})
+    items = [
+        ("enabled", "Automation", "Schaltet automatische Starts komplett ein oder aus."),
+    ]
+    rows = [
+        render_setting_toggle(key, title, description, global_entities.get(key, ""), global_states.get(key))
+        for key, title, description in items
+        if global_entities.get(key)
+    ]
+    return "".join(rows) or '<p class="empty">Keine Schalter-Helper gefunden.</p>'
+
+
+def render_settings_travel_toggle(summary: dict) -> str:
+    global_entities = summary.get("entities", {}).get("global", {})
+    global_states = summary.get("states", {}).get("global", {})
+    entity_id = global_entities.get("travel_logic", "")
+    if not entity_id:
+        return ""
+    return render_setting_toggle(
+        "travel_logic",
+        "Reiselogik",
+        "Pausiert die Automation, wenn jemand außerhalb des Reiseradius ist.",
+        entity_id,
+        global_states.get("travel_logic"),
+    )
+
+
+def render_settings_schedule(summary: dict) -> str:
+    global_entities = summary.get("entities", {}).get("global", {})
+    global_states = summary.get("states", {}).get("global", {})
+    items = [
+        ("start_hour", "Automatisch reinigen ab", "Ab dieser Uhrzeit darf der Staubsauger automatisch reinigen.", "1"),
+        ("end_hour", "Automatisch reinigen bis", "Bis zu dieser Uhrzeit darf der Staubsauger reinigen.", "1"),
+    ]
+    rows = [
+        render_setting_number(key, title, description, global_entities.get(key, ""), global_states.get(key), step)
+        for key, title, description, step in items
+        if global_entities.get(key)
+    ]
+    return "".join(rows)
+
+
+def active_weekday_keys(summary: dict) -> set[str]:
+    global_states = summary.get("states", {}).get("global", {})
+    raw = state_value(global_states.get("active_weekdays"), DEFAULT_ACTIVE_WEEKDAYS)
+    if not raw or raw in {"unknown", "unavailable"}:
+        raw = DEFAULT_ACTIVE_WEEKDAYS
+    return {part.strip().lower() for part in str(raw).replace(";", ",").split(",") if part.strip()}
+
+
+def format_active_weekdays(summary: dict) -> str:
+    active = active_weekday_keys(summary)
+    labels = {key: label for key, label in WEEKDAY_OPTIONS}
+    if active == {key for key, _label in WEEKDAY_OPTIONS}:
+        return "Täglich"
+    if active == {"mon", "tue", "wed", "thu", "fri"}:
+        return "Mo-Fr"
+    if active == {"mon", "tue", "wed", "thu", "fri", "sat"}:
+        return "Mo-Sa"
+    return ", ".join(labels[key] for key, _label in WEEKDAY_OPTIONS if key in active) or "Keine Tage"
+
+
+def render_settings_weekdays(summary: dict) -> str:
+    global_entities = summary.get("entities", {}).get("global", {})
+    entity_id = global_entities.get("active_weekdays", "")
+    if not entity_id:
+        return ""
+    active = active_weekday_keys(summary)
+    buttons = "".join(
+        f"""
+          <button class="weekday-button {'active' if key in active else ''}" type="button" data-weekday="{escape(key)}" aria-pressed="{'true' if key in active else 'false'}">
+            {escape(label)}
+          </button>
+        """
+        for key, label in WEEKDAY_OPTIONS
+    )
+    value = ",".join(key for key, _label in WEEKDAY_OPTIONS if key in active)
+    return f"""
+      <section class="weekday-row" data-weekdays data-weekdays-entity="{escape(entity_id)}">
+        <div>
+          <strong>Automatisch reinigen an</strong>
+          <span>Wochentage, an denen automatische Starts erlaubt sind.</span>
+        </div>
+        <div class="weekday-buttons" data-weekday-buttons data-value="{escape(value)}">
+          {buttons}
+        </div>
+      </section>
+    """
+
+
+def render_settings_push(summary: dict) -> str:
+    global_entities = summary.get("entities", {}).get("global", {})
+    global_states = summary.get("states", {}).get("global", {})
+    items = [
+        ("start_push", "Start-Push", "Benachrichtigung, wenn der Staubsauger automatisch loslegt."),
+        ("return_push", "Rückkehr-Zusammenfassung", "Sendet die Zusammenfassung an die Person, die nach Hause kommt."),
+    ]
+    rows = [
+        render_setting_toggle(key, title, description, global_entities.get(key, ""), global_states.get(key))
+        for key, title, description in items
+        if global_entities.get(key)
+    ]
+    return "".join(rows) or '<p class="empty">Keine Push-Helper gefunden.</p>'
+
+
+def render_settings_numbers(summary: dict) -> str:
+    global_entities = summary.get("entities", {}).get("global", {})
+    global_states = summary.get("states", {}).get("global", {})
+    items = [
+        ("return_buffer", "Vor Rückkehr fertig sein", "So viele Minuten vor der erwarteten Ankunft soll die Reinigung beendet sein.", "1"),
+    ]
+    rows = [
+        render_setting_number(key, title, description, global_entities.get(key, ""), global_states.get(key), step)
+        for key, title, description, step in items
+        if global_entities.get(key)
+    ]
+    return "".join(rows) or '<p class="empty">Keine Zahlen-Helper gefunden.</p>'
+
+
+def render_settings_home_map(summary: dict) -> str:
+    global_entities = summary.get("entities", {}).get("global", {})
+    global_states = summary.get("states", {}).get("global", {})
+    lat_entity = global_entities.get("home_latitude", "")
+    lng_entity = global_entities.get("home_longitude", "")
+    radius_entity = global_entities.get("travel_pause_radius", "")
+    lat = number_value(state_value(global_states.get("home_latitude"), ""), 52.52) or 52.52
+    lng = number_value(state_value(global_states.get("home_longitude"), ""), 13.405) or 13.405
+    radius = number_value(state_value(global_states.get("travel_pause_radius"), ""), 25) or 25
+    return f"""
+      <div class="map-card"
+        data-home-map
+        data-lat-entity="{escape(lat_entity)}"
+        data-lng-entity="{escape(lng_entity)}"
+        data-radius-entity="{escape(radius_entity)}"
+        data-lat="{escape(lat)}"
+        data-lng="{escape(lng)}"
+        data-radius="{escape(radius)}">
+        <div class="map-canvas" data-map-canvas aria-label="Home-Punkt und Reise-Radius"></div>
+        <input type="hidden" value="{escape(lat)}" data-map-lat>
+        <input type="hidden" value="{escape(lng)}" data-map-lng>
+        <input type="hidden" value="{escape(radius)}" data-map-radius-input>
+        <div class="map-actions">
+          <div class="map-meta">
+            <span data-map-coordinates>{escape(format_number(lat))} · {escape(format_number(lng))}</span>
+            <span data-map-status>Radius {escape(format_number(radius, ' km'))}</span>
+          </div>
+          <button type="button" data-save-map>Speichern</button>
+        </div>
+      </div>
+    """
+
+
+def render_settings_rooms(summary: dict) -> str:
+    rooms = summary.get("states", {}).get("rooms", []) or []
+    stats = summary.get("status", {}).get("room_stats", []) or []
+    if not rooms:
+        return '<p class="empty">Keine Räume konfiguriert.</p>'
+
+    stat_by_key = {str(item.get("room_key")): item for item in stats if isinstance(item, dict)}
+    rendered = []
+    for index, room in enumerate(rooms, start=1):
+        room_stats = stat_by_key.get(str(room.get("id")), {})
+        enabled = bool_on(room.get("enabled_state"))
+        enabled_text = "Aktiv" if enabled else "Inaktiv"
+        enabled_class = "on" if enabled else ""
+        room_class = "" if enabled else " inactive"
+        learned = room_stats.get("learned_duration_min")
+        configured = room_stats.get("configured_duration_min")
+        actual = room_stats.get("average_actual_duration_min")
+        interval_hours = number_value(state_value(room.get("interval_h_state"), ""), 0) or 0
+        interval_days = interval_hours / 24 if interval_hours else 0
+        meta = " · ".join(
+            part
+            for part in [
+                f"gelernt {format_number(learned, ' min')}" if learned is not None else "",
+                f"konfiguriert {format_number(configured, ' min')}" if configured is not None else "",
+                f"Schnitt {format_number(actual, ' min')}" if actual is not None else "",
+            ]
+            if part
+        )
+        rendered.append(
+            f"""
+            <article class="room-settings-card{room_class}" data-room-card data-room-key="{escape(room.get("id"))}">
+              <span class="room-drag-cue" draggable="true" aria-hidden="true"></span>
+              <div class="room-settings-head">
+                <div>
+                  <div class="room-title-line">
+                    <strong><span>{index}.</span> {escape(room.get("name"))}</strong>
+                    <button class="status-button {enabled_class}" type="button" data-toggle-entity="{escape(room.get("enabled"))}">
+                      {escape(enabled_text)}
+                    </button>
+                  </div>
+                  <span>{escape(meta or "Noch keine Laufdaten")}</span>
+                </div>
+              </div>
+              <div class="room-settings-grid">
+                <label class="number-row room-interval-row">
+                  <span>
+                    <strong>Intervall</strong>
+                    <small>Tage bis zur nächsten Fälligkeit.</small>
+                  </span>
+                  <input type="number" step="0.5" value="{escape(interval_days)}" data-number-entity="{escape(room.get("interval_h", ""))}" data-setting-key="interval_days">
+                  <span class="room-interval-unit">Tage</span>
+                </label>
+              </div>
+            </article>
+            """
+        )
+    return "".join(rendered)
+
+
+def render_settings_system(summary: dict) -> str:
+    options = summary.get("options", {})
+    entities = summary.get("entities", {})
+    global_entities = entities.get("global", {})
+    one_time_entity = global_entities.get("one_time_room_override", "")
+    rows = [
+        ("Staubsauger", options.get("vacuum_entity")),
+        ("Benachrichtigung", options.get("notify_service") or "deaktiviert"),
+        ("Bewohner", options.get("presence_entities")),
+        ("Reise-Person", options.get("travel_person_entity")),
+        ("Home-Zone", options.get("home_zone")),
+        ("Reise-Pause-Zone", options.get("travel_pause_zone") or "nicht gesetzt"),
+        ("Historie", f"{options.get('history_weeks', '-')} Wochen"),
+        ("Lernfenster", f"{options.get('learning_window', '-')} Läufe"),
+    ]
+    entity_rows = "".join(
+        f"<div class=\"system-row\"><span>{escape(label)}</span><strong>{escape('n/a' if value in (None, '') else value)}</strong></div>"
+        for label, value in rows
+    )
+    override_action = ""
+    if one_time_entity:
+        override_value = state_value(summary.get("states", {}).get("global", {}).get("one_time_room_override"), "")
+        override_action = f"""
+          <div class="system-action">
+            <div>
+              <strong>Einmaliger Raum-Override</strong>
+              <span>{escape(override_value or "Kein Override gesetzt")}</span>
+            </div>
+            <button type="button" data-clear-text="{escape(one_time_entity)}">Zurücksetzen</button>
+          </div>
+        """
+    return entity_rows + override_action
+
+
+def render_settings_html() -> str:
+    summary = build_summary()
+    replacements = {
+        "settings_toggles": render_settings_toggles(summary),
+        "settings_travel_toggle": render_settings_travel_toggle(summary),
+        "settings_schedule": render_settings_schedule(summary),
+        "settings_weekdays": render_settings_weekdays(summary),
+        "settings_push": render_settings_push(summary),
+        "settings_numbers": render_settings_numbers(summary),
+        "settings_home_map": render_settings_home_map(summary),
+        "settings_rooms": render_settings_rooms(summary),
+        "settings_system": render_settings_system(summary),
+    }
+    output = load_settings_template()
+    for key, value in replacements.items():
+        output = output.replace("{{{" + key + "}}}", str(value))
+        output = output.replace("{{" + key + "}}", escape(value))
+    return output
+
+
+SETTINGS_HTML = """<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Einstellungen</title></head>
+<body><main><a href="/">Zurueck</a><h1>Einstellungen</h1>{{{settings_toggles}}}{{{settings_numbers}}}{{{settings_rooms}}}{{{settings_system}}}</main></body>
+</html>
+"""
 
 
 HTML = """<!doctype html>
@@ -3130,6 +3464,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/summary":
             self._json_response(build_summary())
             return
+        if parsed.path.startswith("/static/"):
+            self._handle_static(parsed.path)
+            return
+        if parsed.path == "/settings":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(render_settings_html().encode("utf-8"))
+            return
 
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -3155,6 +3498,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/set_number":
             self._handle_set_number()
+            return
+        if parsed.path == "/api/set_text":
+            self._handle_set_text()
             return
         self.send_response(404)
         self.end_headers()
@@ -3284,6 +3630,48 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json_response({"ok": False, "error": str(err)}, status=502)
         except Exception as err:
             self._json_response({"ok": False, "error": str(err)}, status=500)
+
+    def _handle_set_text(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception:
+            self._json_response({"ok": False, "error": "invalid payload"}, status=400)
+            return
+
+        entity_id = str(payload.get("entity_id") or "")
+        value = str(payload.get("value") or "")
+        if not entity_id.startswith("input_text."):
+            self._json_response({"ok": False, "error": "unsupported entity"}, status=400)
+            return
+
+        try:
+            service_call("input_text", "set_value", entity_id, {"value": value})
+            self._json_response({"ok": True})
+        except urllib.error.HTTPError as err:
+            self._json_response({"ok": False, "error": str(err)}, status=502)
+        except Exception as err:
+            self._json_response({"ok": False, "error": str(err)}, status=500)
+
+    def _handle_static(self, path: str):
+        name = Path(urllib.parse.unquote(path)).name
+        if name not in {"leaflet.js", "leaflet.css"}:
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        file_path = LOCAL_STATIC_PATH / name
+        if not file_path.exists():
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        content_type = "text/css; charset=utf-8" if name.endswith(".css") else "application/javascript; charset=utf-8"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        self.wfile.write(file_path.read_bytes())
 
     def _json_response(self, payload: dict, status: int = 200):
         self.send_response(status)

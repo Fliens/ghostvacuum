@@ -256,8 +256,15 @@ def default_options(raw_options: Dict[str, Any]) -> Dict[str, Any]:
             raw_options.get("return_summary_enabled_entity")
         )
         or f"input_boolean.{helper_prefix}_return_summary_enabled",
+        "active_weekdays_entity": normalize_str(
+            raw_options.get("active_weekdays_entity")
+        )
+        or f"input_text.{helper_prefix}_active_weekdays",
         "start_hour": int(raw_options.get("start_hour", 8)),
         "end_hour": int(raw_options.get("end_hour", 22)),
+        "active_weekdays": raw_options.get(
+            "active_weekdays", "mon,tue,wed,thu,fri,sat"
+        ),
         "check_interval_min": int(raw_options.get("check_interval_min", 30)),
         "monitor_interval_min": int(raw_options.get("monitor_interval_min", 5)),
         "return_buffer_min": int(raw_options.get("return_buffer_min", 5)),
@@ -324,8 +331,10 @@ def build_app_config(options: Dict[str, Any]) -> Dict[str, Any]:
         "return_summary_enabled_entity": options[
             "return_summary_enabled_entity"
         ],
+        "active_weekdays_entity": options["active_weekdays_entity"],
         "start_hour": options["start_hour"],
         "end_hour": options["end_hour"],
+        "active_weekdays": options["active_weekdays"],
         "check_interval_min": options["check_interval_min"],
         "monitor_interval_min": options["monitor_interval_min"],
         "return_buffer_min": options["return_buffer_min"],
@@ -377,6 +386,9 @@ def build_helpers(options: Dict[str, Any]) -> Dict[str, Any]:
     one_time_room_override_object = helper_object_id(
         options["one_time_room_override_entity"], "input_text"
     )
+    active_weekdays_object = helper_object_id(
+        options["active_weekdays_entity"], "input_text"
+    )
     enabled_object = helper_object_id(options["enabled_entity"], "input_boolean")
     learning_object = helper_object_id(
         options["learning_enabled_entity"], "input_boolean"
@@ -427,7 +439,12 @@ def build_helpers(options: Dict[str, Any]) -> Dict[str, Any]:
             "name": "Vacuum One-Time Room Priority",
             "max": 128,
             "initial": "",
-        }
+        },
+        active_weekdays_object: {
+            "name": "Vacuum Active Weekdays",
+            "max": 64,
+            "initial": options["active_weekdays"],
+        },
     }
 
     input_boolean: Dict[str, Dict[str, Any]] = {

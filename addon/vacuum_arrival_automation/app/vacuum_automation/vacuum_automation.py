@@ -104,6 +104,10 @@ class VacuumAutomation(hass.Hass):
         )
         self.start_hour_entity = self.args.get("start_hour_entity")
         self.end_hour_entity = self.args.get("end_hour_entity")
+        self.active_weekdays = self._normalize_weekdays(
+            self.args.get("active_weekdays", ["mon", "tue", "wed", "thu", "fri", "sat"])
+        )
+        self.active_weekdays_entity = self.args.get("active_weekdays_entity")
         self.return_buffer_entity = self.args.get("return_buffer_entity")
         self.fallback_speed_entity = self.args.get("fallback_speed_entity")
         self.default_travel_time_entity = self.args.get("default_travel_time_entity")
@@ -360,6 +364,28 @@ class VacuumAutomation(hass.Hass):
     def _current_end_hour(self) -> int:
         return self._runtime_numeric(self.end_hour_entity, self.end_hour, int)
 
+    def _normalize_weekdays(self, value) -> set[str]:
+        valid = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+        if isinstance(value, str):
+            parts = value.replace(";", ",").split(",")
+        elif isinstance(value, (list, tuple, set)):
+            parts = value
+        else:
+            parts = []
+        days = {str(part).strip().lower() for part in parts if str(part).strip()}
+        return {day for day in days if day in valid}
+
+    def _current_active_weekdays(self) -> set[str]:
+        if self.active_weekdays_entity:
+            state = self.get_state(self.active_weekdays_entity)
+            if state not in [None, "", "unknown", "unavailable"]:
+                return self._normalize_weekdays(state)
+        return self.active_weekdays
+
+    def _is_active_weekday(self) -> bool:
+        weekday = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][self.datetime().weekday()]
+        return weekday in self._current_active_weekdays()
+
     def _current_return_buffer_min(self) -> int:
         return self._runtime_numeric(
             self.return_buffer_entity, self.return_buffer_min, int
@@ -435,6 +461,7 @@ class VacuumAutomation(hass.Hass):
             for entity_id in [
                 self.start_hour_entity,
                 self.end_hour_entity,
+                self.active_weekdays_entity,
                 self.return_buffer_entity,
                 self.fallback_speed_entity,
                 self.default_travel_time_entity,
@@ -968,6 +995,8 @@ class VacuumAutomation(hass.Hass):
             return False
 
         now = self.datetime()
+        if not self._is_active_weekday():
+            return False
         if not (self._current_start_hour() <= now.hour < self._current_end_hour()):
             return False
         if not self._is_everyone_away():

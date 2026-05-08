@@ -55,12 +55,14 @@ options:
   travel_mode_enabled_entity: input_boolean.vacuum_automation_travel_mode_enabled
   start_notifications_enabled_entity: input_boolean.vacuum_automation_start_notifications_enabled
   return_summary_enabled_entity: input_boolean.vacuum_automation_return_summary_enabled
+  active_weekdays_entity: input_text.vacuum_automation_active_weekdays
   storage_dir: /config/appdaemon/storage/vacuum_automation
   max_history_entries: 1500
   history_weeks: 8
   learning_window: 6
   start_hour: 8
   end_hour: 22
+  active_weekdays: mon,tue,wed,thu,fri,sat
   check_interval_min: 30
   monitor_interval_min: 5
   return_buffer_min: 5
@@ -141,12 +143,14 @@ schema:
   travel_mode_enabled_entity: str
   start_notifications_enabled_entity: str
   return_summary_enabled_entity: str
+  active_weekdays_entity: str
   storage_dir: str
   max_history_entries: int
   history_weeks: int
   learning_window: int
   start_hour: int
   end_hour: int
+  active_weekdays: str
   check_interval_min: int
   monitor_interval_min: int
   return_buffer_min: int
