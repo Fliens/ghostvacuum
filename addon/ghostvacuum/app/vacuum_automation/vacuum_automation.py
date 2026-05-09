@@ -192,6 +192,13 @@ class VacuumAutomation(hass.Hass):
             self.datetime() + timedelta(minutes=1),
             self.monitor_interval_min * 60,
         )
+        # Check for missing helpers every 5 minutes.
+        self.run_every(
+            self._check_helper_entities,
+            self.datetime() + timedelta(minutes=2),
+            300,
+        )
+        self.missing_helpers: List[str] = []
 
         self._ensure_presence_listeners()
         self.listen_state(
@@ -457,6 +464,32 @@ class VacuumAutomation(hass.Hass):
             ]
             if entity_id
         ]
+
+    def _check_helper_entities(self, kwargs=None):
+        """Check if all required helper entities exist and update missing_helpers list."""
+        all_helpers = (
+            [self.state_helper, self.one_time_room_override_entity, self.enabled_entity]
+            + self._list_runtime_helper_entities()
+            + self._list_room_helper_entities()
+        )
+
+        missing = []
+        for entity_id in all_helpers:
+            if not entity_id:
+                continue
+            state = self.get_state(entity_id, attribute="all")
+            if (
+                not isinstance(state, dict)
+                or state.get("state") in (None, "unavailable")
+            ):
+                missing.append(entity_id)
+
+        if missing and missing != self.missing_helpers:
+            self.log(f"Missing helper entities detected: {missing}")
+            self.missing_helpers = missing
+        elif not missing and self.missing_helpers:
+            self.log("All helper entities restored")
+            self.missing_helpers = []
 
     def _presence_state(self, entity_id: str) -> str:
         return str(self.get_state(entity_id) or "unknown")
@@ -1482,6 +1515,7 @@ class VacuumAutomation(hass.Hass):
             "recent_runs": recent_runs,
             "weekly_stats": weekly_stats,
             "history_entries": len(self.history_entries),
+            "missing_helpers": self.missing_helpers,
         }
 
         self.set_state(

@@ -477,8 +477,11 @@ class VacuumAutomation(hass.Hass):
         for entity_id in all_helpers:
             if not entity_id:
                 continue
-            state = self.get_state(entity_id)
-            if state is None or state == "unavailable":
+            state = self.get_state(entity_id, attribute="all")
+            if (
+                not isinstance(state, dict)
+                or state.get("state") in (None, "unavailable")
+            ):
                 missing.append(entity_id)
 
         if missing and missing != self.missing_helpers:
