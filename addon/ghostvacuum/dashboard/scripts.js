@@ -514,6 +514,53 @@
     setInterval(refresh, 3000);
   })();
 
+  // Test create helpers button handler (no reload, shows full output)
+  document.addEventListener("click", async function (e) {
+    const btn = e.target.closest("[data-action='test-create-helpers']");
+    if (!btn) return;
+
+    const resultEl = document.getElementById("debug-create-result");
+    if (resultEl) {
+      resultEl.textContent = "Starte Helper-Erstellung...";
+    }
+
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = "Läuft...";
+
+    try {
+      const resp = await fetch(apiUrl("/api/recreate_helpers"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const result = await resp.json();
+
+      if (resultEl) {
+        resultEl.textContent = JSON.stringify(result, null, 2);
+      }
+
+      btn.textContent = result.ok ? "Erledigt" : "Fehler";
+      btn.style.background = result.ok ? "var(--accent)" : "var(--danger)";
+
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.style.background = "var(--warning)";
+        btn.disabled = false;
+      }, 3000);
+    } catch (err) {
+      if (resultEl) {
+        resultEl.textContent = "Fehler: " + err.message;
+      }
+      btn.textContent = "Fehler";
+      btn.style.background = "var(--danger)";
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.style.background = "var(--warning)";
+        btn.disabled = false;
+      }, 3000);
+    }
+  });
+
   // Repair helpers button handler
   document.addEventListener("click", async function (e) {
     const btn = e.target.closest("[data-action='repair-helpers']");

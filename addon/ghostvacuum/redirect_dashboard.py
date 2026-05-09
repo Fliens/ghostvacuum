@@ -4468,51 +4468,112 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _handle_recreate_helpers(self):
         """Trigger recreation of missing helper entities."""
         import subprocess
+        from pathlib import Path
 
         options = load_options()
         helper_prefix = options.get("helper_prefix", "vacuum_automation")
 
+        # Find helper_setup.py - check multiple locations
+        script_paths = [
+            Path("/opt/vacuum_automation/helper_setup.py"),  # Container location
+            Path(__file__).parent / "helper_setup.py",  # Same directory as this file
+        ]
+        script_path = None
+        for path in script_paths:
+            if path.exists():
+                script_path = str(path)
+                break
+
+        if not script_path:
+            self._json_response({
+                "ok": False,
+                "error": "helper_setup.py not found",
+                "searched": [str(p) for p in script_paths],
+            }, status=500)
+            return
+
+        # Check for SUPERVISOR_TOKEN
+        supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
+        if not supervisor_token:
+            self._json_response({
+                "ok": False,
+                "error": "SUPERVISOR_TOKEN not set - helper creation only works inside the add-on",
+                "hint": "Run this inside Home Assistant, not locally",
+            }, status=400)
+            return
+
         try:
             # Run the helper_setup script with --check flag
             result = subprocess.run(
-                ["python", "/opt/vacuum_automation/helper_setup.py", "--check"],
+                ["python", script_path, "--check"],
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env={**os.environ, "SUPERVISOR_TOKEN": supervisor_token},
             )
             self._json_response({
                 "ok": result.returncode == 0,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
+                "returncode": result.returncode,
             })
         except subprocess.TimeoutExpired:
             self._json_response({"ok": False, "error": "timeout"}, status=504)
-        except FileNotFoundError:
-            self._json_response({"ok": False, "error": "helper_setup.py not found"}, status=500)
+        except FileNotFoundError as err:
+            self._json_response({"ok": False, "error": f"Command not found: {err}"}, status=500)
         except Exception as err:
             self._json_response({"ok": False, "error": str(err)}, status=500)
 
     def _handle_cleanup_helpers(self):
         """Delete all helper entities created by this add-on."""
         import subprocess
+        from pathlib import Path
+
+        # Find helper_setup.py - check multiple locations
+        script_paths = [
+            Path("/opt/vacuum_automation/helper_setup.py"),  # Container location
+            Path(__file__).parent / "helper_setup.py",  # Same directory as this file
+        ]
+        script_path = None
+        for path in script_paths:
+            if path.exists():
+                script_path = str(path)
+                break
+
+        if not script_path:
+            self._json_response({
+                "ok": False,
+                "error": "helper_setup.py not found",
+            }, status=500)
+            return
+
+        supervisor_token = os.environ.get("SUPERVISOR_TOKEN", "")
+        if not supervisor_token:
+            self._json_response({
+                "ok": False,
+                "error": "SUPERVISOR_TOKEN not set - cleanup only works inside the add-on",
+            }, status=400)
+            return
 
         try:
             # Run the helper_setup script with --cleanup flag
             result = subprocess.run(
-                ["python", "/opt/vacuum_automation/helper_setup.py", "--cleanup"],
+                ["python", script_path, "--cleanup"],
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env={**os.environ, "SUPERVISOR_TOKEN": supervisor_token},
             )
             self._json_response({
                 "ok": result.returncode == 0,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
+                "returncode": result.returncode,
             })
         except subprocess.TimeoutExpired:
             self._json_response({"ok": False, "error": "timeout"}, status=504)
-        except FileNotFoundError:
-            self._json_response({"ok": False, "error": "helper_setup.py not found"}, status=500)
+        except FileNotFoundError as err:
+            self._json_response({"ok": False, "error": f"Command not found: {err}"}, status=500)
         except Exception as err:
             self._json_response({"ok": False, "error": str(err)}, status=500)
 
