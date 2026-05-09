@@ -373,14 +373,16 @@ class WebSocketHelper:
         self,
         name: str,
         icon: str = "mdi:toggle-switch",
-        initial: bool = False,
     ) -> dict | None:
-        """Create an input_boolean helper."""
+        """Create an input_boolean helper.
+
+        Note: The input_boolean/create API does not support setting an initial state.
+        The entity will default to 'off' and can be set after creation if needed.
+        """
         return await self.send_command(
             "input_boolean/create",
             name=name,
             icon=icon,
-            initial_state=initial,
         )
 
     async def create_input_number(
@@ -526,7 +528,6 @@ async def setup_helpers_async(prefix: str, rooms: List[dict]) -> int:
             result = await ws.create_input_boolean(
                 name=helper["name"],
                 icon=helper.get("icon", "mdi:toggle-switch"),
-                initial=helper.get("initial", False),
             )
 
             if result and result.get("success"):
@@ -574,7 +575,6 @@ async def setup_helpers_async(prefix: str, rooms: List[dict]) -> int:
                 result = await ws.create_input_boolean(
                     name=f"Vacuum {room_name} Enabled",
                     icon=room_icon,
-                    initial=room.get("enabled", True),
                 )
                 if result and result.get("success"):
                     print(f"[helper_setup] Created {entity_id}")
@@ -732,7 +732,6 @@ async def ensure_helpers_exist_async(prefix: str, rooms: List[dict]) -> List[str
                         result = await ws.create_input_boolean(
                             name=helper["name"],
                             icon=helper.get("icon", "mdi:toggle-switch"),
-                            initial=helper.get("initial", False),
                         )
                         break
                 else:
@@ -742,7 +741,6 @@ async def ensure_helpers_exist_async(prefix: str, rooms: List[dict]) -> List[str
                             result = await ws.create_input_boolean(
                                 name=f"Vacuum {room['name']} Enabled",
                                 icon=room.get("icon", "mdi:floor-plan"),
-                                initial=room.get("enabled", True),
                             )
                             break
 
@@ -883,6 +881,12 @@ def main() -> int:
     # Default: Setup mode - create all helpers
     created = asyncio.run(setup_helpers_async(prefix, rooms))
     print(f"[helper_setup] Created {created} helpers")
+
+    if created > 0:
+        # Give Home Assistant time to register the new entities
+        print("[helper_setup] Waiting for entities to be registered...")
+        time.sleep(3)
+
     print("[helper_setup] Helper setup complete")
     return 0
 

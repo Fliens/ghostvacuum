@@ -1,5 +1,5 @@
 name: GhostVacuum
-version: "0.1.17"
+version: "0.1.18"
 slug: ghostvacuum
 description: Smart vacuum automation that cleans while you're away and finishes before you return
 url: https://github.com/Fliens/ghostvacuum
