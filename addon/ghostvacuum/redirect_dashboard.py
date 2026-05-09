@@ -2079,9 +2079,34 @@ def render_state_machine(summary: dict) -> str:
     )
 
 
+def check_missing_helpers(summary: dict) -> List[str]:
+    """Check which helper entities are missing by verifying their state."""
+    global_entities = summary.get("entities", {}).get("global", {})
+    global_states = summary.get("states", {}).get("global", {})
+
+    missing = []
+    for key, entity_id in global_entities.items():
+        if not entity_id:
+            continue
+        state_obj = global_states.get(key)
+        # Entity is missing if state is None, empty dict, or state value is None/unavailable
+        if not state_obj or not isinstance(state_obj, dict):
+            missing.append(entity_id)
+        elif state_obj.get("state") in (None, "unavailable", "unknown"):
+            missing.append(entity_id)
+
+    return missing
+
+
 def render_missing_helpers_banner(summary: dict) -> str:
     """Render a warning banner if helper entities are missing."""
+    # First check status sensor, then do our own check
     missing = summary.get("status", {}).get("missing_helpers", [])
+
+    # If status sensor hasn't detected missing helpers yet, check ourselves
+    if not missing:
+        missing = check_missing_helpers(summary)
+
     if not missing:
         return ""
 

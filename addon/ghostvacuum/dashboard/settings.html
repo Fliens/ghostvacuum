@@ -1915,6 +1915,12 @@
         });
         const result = await resp.json();
 
+        // Log the full response to debug panel
+        logApiCall("POST", "/api/recreate_helpers", null, result, null);
+
+        // Also log to console for easier debugging
+        console.log("Helper repair result:", result);
+
         if (result.ok) {
           btn.textContent = "Erledigt!";
           btn.style.background = "var(--accent)";
@@ -1923,15 +1929,19 @@
         } else {
           btn.textContent = "Fehler";
           btn.style.background = "var(--danger)";
-          showToast("Fehler beim Erstellen der Helper");
+          // Show more details about the error
+          const errorMsg = result.stderr || result.error || "Unbekannter Fehler";
+          console.error("Helper repair failed:", errorMsg);
+          showToast("Fehler: " + (errorMsg.substring(0, 50)));
           setTimeout(() => {
             btn.textContent = originalText;
             btn.style.background = "";
             btn.disabled = false;
-          }, 3000);
+          }, 5000);
         }
       } catch (err) {
         console.error("Helper repair error:", err);
+        logApiCall("POST", "/api/recreate_helpers", null, null, err);
         btn.textContent = "Fehler";
         btn.style.background = "var(--danger)";
         showToast("Fehler beim Erstellen der Helper");
