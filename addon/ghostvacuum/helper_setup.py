@@ -204,6 +204,17 @@ CORE_INPUT_NUMBER_HELPERS = [
 ]
 
 
+def helper_display_prefix(prefix: str) -> str:
+    """Return the human-readable prefix Home Assistant slugifies into entity IDs."""
+    return str(prefix or DEFAULT_HELPER_PREFIX).replace("_", " ").strip()
+
+
+def helper_display_name(prefix: str, suffix: str) -> str:
+    """Build a helper name that slugifies to <prefix>_<suffix>."""
+    suffix_name = str(suffix or "").replace("_", " ").strip()
+    return f"{helper_display_prefix(prefix)} {suffix_name}".strip()
+
+
 def read_options() -> Dict[str, Any]:
     """Read add-on options from the options.json file."""
     if not OPTIONS_PATH.exists():
@@ -515,7 +526,7 @@ async def setup_helpers_async(prefix: str, rooms: List[dict]) -> int:
                 continue
 
             result = await ws.create_input_text(
-                name=helper["name"],
+                name=helper_display_name(prefix, helper["id"]),
                 max_len=helper.get("max", 255),
                 initial=helper.get("initial", ""),
             )
@@ -536,7 +547,7 @@ async def setup_helpers_async(prefix: str, rooms: List[dict]) -> int:
                 continue
 
             result = await ws.create_input_boolean(
-                name=helper["name"],
+                name=helper_display_name(prefix, helper["id"]),
                 icon=helper.get("icon", "mdi:toggle-switch"),
             )
 
@@ -556,7 +567,7 @@ async def setup_helpers_async(prefix: str, rooms: List[dict]) -> int:
                 continue
 
             result = await ws.create_input_number(
-                name=helper["name"],
+                name=helper_display_name(prefix, helper["id"]),
                 min_val=helper.get("min", 0),
                 max_val=helper.get("max", 100),
                 step=helper.get("step", 1),
@@ -733,7 +744,7 @@ async def ensure_helpers_exist_async(prefix: str, rooms: List[dict]) -> List[str
                 for helper in CORE_INPUT_TEXT_HELPERS:
                     if helper["id"] == suffix:
                         result = await ws.create_input_text(
-                            name=helper["name"],
+                            name=helper_display_name(prefix, helper["id"]),
                             max_len=helper.get("max", 255),
                             initial=helper.get("initial", ""),
                         )
@@ -744,7 +755,7 @@ async def ensure_helpers_exist_async(prefix: str, rooms: List[dict]) -> List[str
                 for helper in CORE_INPUT_BOOLEAN_HELPERS:
                     if helper["id"] == suffix:
                         result = await ws.create_input_boolean(
-                            name=helper["name"],
+                            name=helper_display_name(prefix, helper["id"]),
                             icon=helper.get("icon", "mdi:toggle-switch"),
                         )
                         break
@@ -763,7 +774,7 @@ async def ensure_helpers_exist_async(prefix: str, rooms: List[dict]) -> List[str
                 for helper in CORE_INPUT_NUMBER_HELPERS:
                     if helper["id"] == suffix:
                         result = await ws.create_input_number(
-                            name=helper["name"],
+                            name=helper_display_name(prefix, helper["id"]),
                             min_val=helper.get("min", 0),
                             max_val=helper.get("max", 100),
                             step=helper.get("step", 1),
@@ -885,11 +896,23 @@ def main() -> int:
 
     if args.check:
         # Check mode - only recreate missing helpers
+        missing_before = get_missing_helpers(prefix, rooms)
         recreated = asyncio.run(ensure_helpers_exist_async(prefix, rooms))
         if recreated:
             print(f"[helper_setup] Recreated {len(recreated)} missing helpers")
         else:
-            print("[helper_setup] All helpers exist or recreation failed")
+            print("[helper_setup] No helpers were recreated")
+        missing_after = get_missing_helpers(prefix, rooms)
+        if missing_after:
+            print(
+                "[helper_setup] Missing helpers remain after repair: "
+                + ", ".join(missing_after)
+            )
+            return 1
+        if missing_before:
+            print("[helper_setup] All missing helpers were repaired")
+        else:
+            print("[helper_setup] All helpers exist")
         return 0
 
     # Default: Setup mode - create all helpers

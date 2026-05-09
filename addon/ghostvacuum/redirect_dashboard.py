@@ -4468,6 +4468,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _handle_recreate_helpers(self):
         """Trigger recreation of missing helper entities."""
         import subprocess
+        import sys
         from pathlib import Path
 
         options = load_options()
@@ -4505,7 +4506,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             # Run the helper_setup script with --check flag
             result = subprocess.run(
-                ["python", script_path, "--check"],
+                [sys.executable, script_path, "--check"],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -4513,6 +4514,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             self._json_response({
                 "ok": result.returncode == 0,
+                "helper_prefix": helper_prefix,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "returncode": result.returncode,
@@ -4527,6 +4529,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _handle_cleanup_helpers(self):
         """Delete all helper entities created by this add-on."""
         import subprocess
+        import sys
         from pathlib import Path
 
         # Find helper_setup.py - check multiple locations
@@ -4558,7 +4561,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             # Run the helper_setup script with --cleanup flag
             result = subprocess.run(
-                ["python", script_path, "--cleanup"],
+                [sys.executable, script_path, "--cleanup"],
                 capture_output=True,
                 text=True,
                 timeout=120,
