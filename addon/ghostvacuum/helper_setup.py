@@ -67,6 +67,12 @@ CORE_INPUT_TEXT_HELPERS = [
         "max": 64,
         "initial": "mon,tue,wed,thu,fri,sat",
     },
+    {
+        "id": "room_names",
+        "name": "vacuum automation room names",  # -> input_text.vacuum_automation_room_names
+        "max": 255,
+        "initial": "{}",
+    },
 ]
 
 CORE_INPUT_BOOLEAN_HELPERS = [
