@@ -1,0 +1,27 @@
+# Installed separately from Runtipi. No Home Assistant or Zigbee restart needed.
+services:
+  observer:
+    image: acockburn/appdaemon@sha256:cabcb3a4e739db2572ecb8dc3cee685300ab27274efda83a6d8ce4d3988dc647
+    container_name: ghostvacuum-observer
+    user: '1000:1000'
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes: ['/home/simon/ghostvacuum-observer:/conf']
+    entrypoint: [appdaemon]
+    command: [-c, /conf]
+  dashboard:
+    image: acockburn/appdaemon@sha256:cabcb3a4e739db2572ecb8dc3cee685300ab27274efda83a6d8ce4d3988dc647
+    container_name: ghostvacuum-dashboard
+    user: '1000:1000'
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes: ['/home/simon/ghostvacuum-observer:/conf:ro']
+    ports: ['172.27.30.30:8099:8099']
+    environment:
+      VACUUM_DASHBOARD_OPTIONS: /conf/options.yaml
+      VACUUM_DASHBOARD_API: http://172.27.30.30:8123/api
+      VACUUM_DASHBOARD_TOKEN_FILE: /conf/secrets.yaml
+    entrypoint: [python]
+    command: [/conf/web/redirect_dashboard.py]

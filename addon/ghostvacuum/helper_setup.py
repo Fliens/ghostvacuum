@@ -43,6 +43,7 @@ DEFAULT_HELPER_PREFIX = "vacuum_automation"
 # HA slugifies the name to create the entity_id, so names must match what we expect.
 # Format: "Vacuum Automation <suffix>" -> input_*.vacuum_automation_<suffix>
 CORE_INPUT_TEXT_HELPERS = [
+    {"id":"cleaning_defaults","max":255,"initial":'{"mode":"cleangenius","genius":"routine_cleaning","sequence":"vacuum_and_mop","suction":"strong","moisture":"wet","route":"deep","repeats":1}'},
     {
         "id": "state",
         "name": "vacuum automation state",  # -> input_text.vacuum_automation_state
@@ -115,6 +116,7 @@ CORE_INPUT_BOOLEAN_HELPERS = [
 ]
 
 CORE_INPUT_NUMBER_HELPERS = [
+    {"id":"start_margin","name":"vacuum automation start margin","min":1,"max":60,"step":1,"mode":"box","initial":5,"unit_of_measurement":"min"},
     {
         "id": "start_hour",
         "name": "vacuum automation start hour",  # -> input_number.vacuum_automation_start_hour
@@ -490,6 +492,8 @@ def get_all_helper_entity_ids(prefix: str, rooms: List[dict]) -> List[str]:
         entity_ids.append(f"input_number.{prefix}_{room_id}_weight")
         entity_ids.append(f"input_number.{prefix}_{room_id}_interval_h")
         entity_ids.append(f"input_number.{prefix}_{room_id}_duration_min")
+        entity_ids.append(f"input_number.{prefix}_{room_id}_completion_percent")
+        entity_ids.append(f"input_text.{prefix}_{room_id}_cleaning_profile")
 
     return entity_ids
 
@@ -644,6 +648,19 @@ async def setup_helpers_async(prefix: str, rooms: List[dict]) -> int:
                     error = result.get("error", {}) if result else {}
                     print(f"[helper_setup] Failed to create {entity_id}: {error}")
 
+            entity_id = f"input_number.{prefix}_{room_id}_completion_percent"
+            if not entity_exists(entity_id):
+                result = await ws.create_input_number(name=f"{prefix} {room_id} completion percent",
+                    min_val=1,max_val=100,step=1,unit_of_measurement="%",mode="box",initial=100)
+                if result and result.get("success"):
+                    created += 1
+
+            entity_id = f"input_text.{prefix}_{room_id}_cleaning_profile"
+            if not entity_exists(entity_id):
+                result = await ws.create_input_text(name=helper_display_name(prefix, f"{room_id}_cleaning_profile"),max_len=255,initial="{}")
+                if result and result.get("success"):
+                    created += 1
+
             # Room duration
             # Name format: "vacuum automation {room_id} duration min" -> input_number.vacuum_automation_{room_id}_duration_min
             entity_id = f"input_number.{prefix}_{room_id}_duration_min"
@@ -750,6 +767,12 @@ async def ensure_helpers_exist_async(prefix: str, rooms: List[dict]) -> List[str
                         )
                         break
 
+                if result is None:
+                    for room in rooms:
+                        if suffix == f"{room['id']}_cleaning_profile":
+                            result = await ws.create_input_text(name=helper_display_name(prefix, suffix),max_len=255,initial="{}")
+                            break
+
             elif domain == "input_boolean":
                 # Check core helpers
                 for helper in CORE_INPUT_BOOLEAN_HELPERS:
@@ -807,6 +830,9 @@ async def ensure_helpers_exist_async(prefix: str, rooms: List[dict]) -> List[str
                                 mode="box",
                                 initial=room.get("interval_h", 48),
                             )
+                            break
+                        elif suffix == f"{room_id}_completion_percent":
+                            result = await ws.create_input_number(name=f"{prefix} {room_id} completion percent", min_val=1,max_val=100,step=1,unit_of_measurement="%",mode="box",initial=100)
                             break
                         elif suffix == f"{room_id}_duration_min":
                             result = await ws.create_input_number(

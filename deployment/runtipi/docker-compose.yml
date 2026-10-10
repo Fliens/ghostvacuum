@@ -1,0 +1,51 @@
+x-runtipi:
+  schema_version: 2
+services:
+  observer:
+    image: acockburn/appdaemon@sha256:cabcb3a4e739db2572ecb8dc3cee685300ab27274efda83a6d8ce4d3988dc647
+    restart: unless-stopped
+    command:
+    - -c
+    - /conf
+    entrypoint:
+    - appdaemon
+    user: 1000:1000
+    volumes:
+    - /home/simon/ghostvacuum-observer:/conf
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+  dashboard:
+    ports:
+    - 172.27.30.30:8099:8099
+    image: acockburn/appdaemon@sha256:cabcb3a4e739db2572ecb8dc3cee685300ab27274efda83a6d8ce4d3988dc647
+    restart: unless-stopped
+    command:
+    - /conf/web/redirect_dashboard.py
+    entrypoint:
+    - python
+    user: 1000:1000
+    volumes:
+    - /home/simon/ghostvacuum-observer:/conf:ro
+    environment:
+    - VACUUM_DASHBOARD_OPTIONS=/conf/options.yaml
+    - VACUUM_DASHBOARD_API=http://172.27.30.30:8123/api
+    - VACUUM_DASHBOARD_TOKEN_FILE=/conf/secrets.yaml
+    cap_drop:
+    - ALL
+    security_opt:
+    - no-new-privileges:true
+    x-runtipi:
+      internal_port: 8099
+      is_main: true
+    labels:
+      traefik.enable: 'true'
+      traefik.http.routers.ghostvacuum-local.rule: Host(`172.27.30.30`) && PathPrefix(`/ghostvacuum/`)
+      traefik.http.routers.ghostvacuum-local.entrypoints: web
+      traefik.http.routers.ghostvacuum-local.priority: '100'
+      traefik.http.routers.ghostvacuum-local.service: ghostvacuum-local
+      traefik.http.routers.ghostvacuum-local.middlewares: ghostvacuum-prefix
+      traefik.http.services.ghostvacuum-local.loadbalancer.server.port: '8099'
+      traefik.http.middlewares.ghostvacuum-prefix.stripprefix.prefixes: /ghostvacuum
+      traefik.docker.network: runtipi_tipi_main_network

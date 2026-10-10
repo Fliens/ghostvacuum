@@ -119,6 +119,11 @@
       box-shadow: var(--shadow);
       padding: 16px;
     }
+    .settings-separator {
+      border: 0;
+      border-top: 1px solid var(--line);
+      margin: 24px 12px;
+    }
     .section-header {
       display: flex;
       align-items: center;
@@ -614,11 +619,36 @@
       border-radius: 6px;
       font-size: 11px;
     }
+    .room-board {
+      display: grid;
+      gap: 8px;
+    }
+    .room-list-header {
+      display: grid;
+      grid-template-columns: 34px minmax(210px, 1fr) 92px repeat(3, minmax(96px, 120px)) 32px;
+      gap: 10px;
+      align-items: center;
+      padding: 0 12px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .room-group-list {display:grid;gap:12px;}
+    .room-group + .room-group {margin-top:28px;padding-top:22px;border-top:1px solid var(--line);}
+    .room-group h3 {margin:0;font-size:16px;}
+    .room-group h3 span {margin-left:8px;color:var(--muted);font-weight:400;}
+    .room-order-buttons {display:flex;flex-direction:column;flex-shrink:0;}
+    .room-order-buttons button {border:0;background:transparent;color:var(--accent);cursor:pointer;padding:0 5px;line-height:18px;}
+    .room-order-buttons button:disabled {opacity:.25;cursor:default;}
+    .room-drag-cue {flex-shrink:0;}
     .room-settings-card {
       display: grid;
-      gap: 12px;
+      grid-template-columns: 34px minmax(210px, 1fr) 92px repeat(3, minmax(96px, 120px)) 32px;
+      gap: 10px;
+      align-items: center;
       position: relative;
-      padding: 14px;
+      padding: 10px 12px;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
@@ -631,33 +661,40 @@
     .room-settings-card.inactive strong {
       color: #53615b;
     }
+    .room-rank {
+      width: 28px;
+      height: 28px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+    }
     .room-settings-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding-right: 34px;
-      flex-wrap: nowrap;
-      }
-      .room-settings-head > .room-info {
-        display: grid;
-        gap: 3px;
-        min-width: 0;
-        flex: 1;
-      }
-      .room-settings-head > .room-actions {
-        flex-shrink: 0;
-        display: flex;
-        gap: 8px;
-      }
-      .room-settings-head > .room-actions .status-button {
-        white-space: nowrap;
-      }
+      min-width: 0;
+    }
+    .room-info {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+    .room-actions {
+      min-width: 0;
+    }
     .room-title-line {
       display: flex;
       align-items: center;
       gap: 8px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      min-width: 0;
+    }
+    .room-title-line strong {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .room-name-editable {
       cursor: pointer;
@@ -679,6 +716,7 @@
       color: inherit;
       outline: 1px solid var(--accent-strong);
       border-radius: 3px;
+      max-width: 100%;
     }
     .room-name-edit-btn {
       background: none;
@@ -701,20 +739,14 @@
       display: none;
     }
     .room-drop-placeholder {
-      min-height: 74px;
+      min-height: 52px;
       border: 2px dashed rgba(34, 122, 85, 0.42);
       border-radius: 8px;
       background: rgba(34, 122, 85, 0.08);
       transition: min-height 120ms ease;
     }
-    .room-settings-grid {
-      display: grid;
-      gap: 6px;
-    }
     .room-drag-cue {
-      position: absolute;
-      top: 12px;
-      right: 12px;
+      position: relative;
       width: 28px;
       height: 30px;
       color: rgba(99, 112, 106, 0.78);
@@ -740,23 +772,44 @@
         0 16px currentColor,
         10px 16px currentColor;
     }
-    .room-interval-row {
-      min-height: 42px;
-      padding: 8px 10px;
+    .room-field {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      min-height: 36px;
+      padding: 6px 8px;
+      border: 1px solid transparent;
+      border-radius: 7px;
       background: var(--panel-soft);
     }
-    .room-interval-row small {
+    .room-field-label {
       display: none;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
     }
-    .room-interval-row input {
-      width: 96px;
-      min-height: 30px;
+    .room-field input {
+      width: 100%;
+      min-width: 0;
+      min-height: 26px;
+      border: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 750;
+      text-align: right;
+      outline: none;
     }
-    .room-interval-unit {
+    .room-field input:focus {
+      outline: 2px solid rgba(34, 122, 85, 0.2);
+      border-radius: 4px;
+      background: #fff;
+    }
+    .room-field-unit {
       color: var(--muted);
       font-size: 12px;
       font-weight: 750;
-      margin-left: -4px;
     }
     .status-button,
     .system-action button {
@@ -1088,6 +1141,130 @@
         margin-top: 8px;
       }
     }
+
+    .room-settings-card {grid-template-columns:minmax(0,1fr) minmax(160px,220px);padding:14px;gap:16px;min-width:0;}
+    .room-settings-head {display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;}
+    .room-settings-grid {display:block;min-width:0;}
+    .room-interval-row {display:grid;grid-template-columns:minmax(0,1fr) 66px auto;gap:8px;align-items:center;padding:10px;min-width:0;}
+    .room-interval-row input {width:66px;min-width:0;text-align:center;padding:8px;}
+    .room-interval-row small {font-size:11px;}
+    .presence-explanation {font-size:13px;color:var(--muted);line-height:1.5;margin:0 0 18px;border:0;background:none;padding:0;}
+    .presence-explanation p {margin:0 0 10px;}
+    .room-name-note {font-size:12px;color:var(--muted);margin:0 0 14px;}
+    .room-settings-card .status-button {font-size:12px;min-height:32px;padding:5px 10px;}
+    @media(max-width:650px){
+      .room-settings-card {grid-template-columns:minmax(0,1fr);gap:10px;}
+      .room-settings-card .room-settings-head {flex-direction:row;align-items:center;}
+      .room-title-line {max-width:100%;}
+      .room-interval-row {grid-template-columns:minmax(0,1fr) 66px auto;}
+      .room-interval-row input {width:66px;}
+    }
+
+    .person-setting {display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);}
+    .person-setting {flex-wrap:wrap;}
+    .person-wifi {flex-basis:100%;display:grid;grid-template-columns:minmax(130px,1fr) minmax(0,2fr);gap:12px;align-items:center;border-top:1px solid var(--line);padding-top:12px;font-size:13px;}
+    .person-wifi small {display:block;color:var(--muted);font-size:11px;margin-top:3px;font-weight:400;}
+    .person-wifi select {width:100%;min-width:0;min-height:40px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;}
+    @media(max-width:600px){.person-wifi{grid-template-columns:1fr;gap:8px;}}
+    .person-setting.active {border-color:#b6d3c3;}
+    .person-setting-info {display:flex;flex-direction:column;align-items:flex-start;gap:7px;}
+    .person-setting-info strong {font-size:16px;}
+    .person-setting .switch {width:auto;grid-template-columns:44px auto;}
+    .person-setting .switch input:focus-visible+span {outline:3px solid #91bba4;outline-offset:3px;}
+    .manage-people {display:inline-block;margin:16px 0;color:var(--accent);font-size:13px;font-weight:650;text-decoration:none;}
+    .tracking-summary {display:flex;justify-content:space-between;gap:14px;padding-top:16px;margin-top:4px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);}
+    .tracking-summary strong {font-weight:500;text-align:right;}
+
+    .tracking-options {border-top:1px solid var(--line);margin-top:8px;padding-top:20px;}
+    .tracking-select-label {display:grid;gap:8px;font-weight:650;font-size:13px;}
+    .tracking-select-label select {width:100%;padding:11px;border:1px solid var(--line);border-radius:8px;background:white;color:var(--ink);font:inherit;}
+    .tracking-option-list {display:grid;gap:10px;margin-top:14px;}
+    .tracking-option {padding:12px;border:1px solid var(--line);border-radius:10px;}
+    .tracking-option.selected {border-color:var(--accent);background:var(--accent-soft);}
+    .tracking-option-choice>div {display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:13px;}
+    .tracking-availability {font-size:11px;color:var(--muted);white-space:nowrap;}
+    .tracking-availability.available {color:var(--accent);}
+    .tracking-option p {font-size:12px;line-height:1.45;color:var(--muted);margin:7px 0 0;overflow-wrap:anywhere;}
+
+    .tracking-option {display:block;cursor:pointer;}
+    .tracking-choice-state {display:flex;align-items:center;gap:12px;}
+    .tracking-choice-state input[type=radio] {appearance:auto;width:19px;height:19px;margin:0;accent-color:var(--accent);cursor:pointer;flex-shrink:0;}
+    .tracking-option.unavailable {background:#f2f3f2;border-color:#e1e5e2;cursor:not-allowed;}
+    .tracking-option.unavailable strong,.tracking-option.unavailable p,.tracking-option.unavailable .tracking-availability {color:#969e99;}
+    .tracking-option.unavailable input[type=radio] {cursor:not-allowed;opacity:.45;}
+
+    .tracking-option {cursor:default;}
+    .tracking-option-choice {display:block;cursor:pointer;}
+    .tracking-option.unavailable .tracking-option-choice {cursor:not-allowed;}
+    .tracking-setup {margin-top:10px;color:var(--ink);font-size:12px;line-height:1.5;cursor:auto;}
+    .tracking-setup summary {cursor:pointer;font-weight:600;color:var(--accent);}
+    .tracking-setup ol {padding-left:20px;margin:12px 0;}
+    .tracking-setup li {margin:0 0 8px;}
+    .tracking-setup code {font-size:11px;overflow-wrap:anywhere;}
+    .tracking-setup a {color:var(--accent);}
+
+    .home-map-editor {display:grid;gap:12px;}
+    .home-map-pair {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;}
+    .home-map-pair .map-card {min-width:0;align-content:start;}
+    .home-map-pair h3 {font-size:14px;margin:0;color:var(--ink);}
+    .home-map-pair .map-canvas {min-height:0;height:260px;}
+    .map-coordinate-label {font-size:11px;color:var(--muted);overflow-wrap:anywhere;}
+    .radius-field {display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);}
+    .radius-field input {min-width:0;width:78px;padding:7px;border:1px solid var(--line);border-radius:7px;background:white;font:inherit;color:var(--ink);}
+    .home-map-editor>.map-actions {justify-content:flex-end;}
+    @media(max-width:650px){.home-map-pair .map-canvas{height:230px;}.home-map-pair{gap:10px;}.home-map-pair .map-card{padding:9px;}.home-map-pair h3{font-size:13px;}}
+    @media(max-width:420px){.home-map-pair{grid-template-columns:minmax(0,1fr);}}
+
+    .map-view-tabs {display:none;}
+    .radius-handle-icon {cursor:ew-resize;}
+    @media(max-width:760px){
+      .map-view-tabs {display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px;background:var(--panel-soft);border-radius:10px;}
+      .map-view-tabs button {padding:10px 7px;border:0;border-radius:7px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:650;cursor:pointer;}
+      .map-view-tabs button[aria-selected=true] {background:var(--panel);color:var(--accent);box-shadow:0 1px 4px #203b2e12;}
+      .home-map-pair {grid-template-columns:minmax(0,1fr);}
+      .home-map-pair [data-map-panel] {display:none;}
+      .home-map-pair [data-map-panel].map-panel-active {display:grid;}
+      .home-map-pair .map-canvas {height:260px;}
+      .home-map-pair h3 {display:none;}
+    }
+    .room-settings-grid {display:grid;gap:10px;}
+    .room-completion {display:grid;gap:10px;min-width:0;font-size:12px;}
+    .room-completion label {display:grid;gap:6px;}
+    .room-completion select,.room-completion input {width:100%;min-width:0;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);font:inherit;color:var(--ink);}
+    .room-completion input {width:72px;}
+    .room-completion [hidden] {display:none;}
+    .analysis-live {background:var(--accent-soft);}
+    .analysis-decision {font-size:20px;color:var(--accent-strong);}
+    .analysis-metrics {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0;}
+    .analysis-metrics div {display:grid;gap:4px;}
+    .analysis-metrics strong {font-size:22px;}
+    .analysis-metrics span,.analysis-note {font-size:12px;color:var(--muted);line-height:1.5;}
+    .analysis-table {width:100%;border-collapse:collapse;font-size:13px;}
+    .analysis-table th,.analysis-table td {padding:12px 6px;text-align:left;border-bottom:1px solid var(--line);}
+    #settings-analysis>.section {margin-bottom:16px;}
+    @media(min-width:651px) and (max-width:899px){
+      .room-settings-card {grid-template-columns:minmax(0,1fr);}
+      .room-settings-head {width:100%;}
+      .room-settings-grid {grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:20px;}
+    }
+    @media(min-width:900px){
+      .room-settings-card {grid-template-columns:minmax(130px,.8fr) 76px minmax(180px,.9fr) minmax(250px,1.3fr);gap:18px;padding:16px;align-items:start;}
+      .room-settings-head,.room-settings-grid {display:contents;}
+      .room-info,.room-actions {align-self:center;}
+      .room-actions {justify-self:start;}
+      .room-interval-row {grid-template-columns:minmax(0,1fr) 66px auto;background:transparent;border:0;padding:0;align-self:center;}
+      .room-completion {align-self:center;}
+    }
+    .room-cleaning {grid-column:1 / -1;min-width:0;border-top:1px solid var(--line,#dce4df);padding-top:10px;}
+    .room-cleaning summary {cursor:pointer;font-weight:600;}
+    .room-cleaning summary span {font-weight:400;color:var(--muted,#69776d);margin-left:12px;font-size:13px;}
+    .profile-fields {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px;}
+    .profile-fields label,.profile-source {display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:600;min-width:0;}
+    .profile-fields select,.profile-source select {width:100%;min-width:0;padding:10px;border:1px solid #dce4df;border-radius:9px;background:white;color:inherit;font:inherit;}
+    .profile-source {max-width:300px;margin-top:14px;}
+    .profile-fields [hidden],.profile-fields[hidden] {display:none!important;}
+    @media(max-width:700px) {.profile-fields {grid-template-columns:repeat(2,minmax(0,1fr));}.room-cleaning summary span {display:block;margin:5px 0 0;}}
+    @media(max-width:430px) {.profile-fields {grid-template-columns:1fr;}}
   </style>
 </head>
 <body>
@@ -1103,8 +1280,7 @@
 
     <nav class="tabs" aria-label="Einstellungsbereiche">
       <button class="tab-button active" type="button" data-tab="general">Allgemein</button>
-      <button class="tab-button" type="button" data-tab="return">Reise & Rückkehr</button>
-      <button class="tab-button" type="button" data-tab="people">Personen</button>
+      <button class="tab-button" type="button" data-tab="return">Personen & Reise</button>
       <button class="tab-button" type="button" data-tab="rooms">Räume</button>
       <button class="tab-button" type="button" data-tab="system">System</button>
     </nav>
@@ -1135,6 +1311,21 @@
     <section class="tab-panel" data-panel="return">
       <section class="section">
         <div class="section-header">
+          <h2>Bewohner</h2>
+        </div>
+        {{{settings_presence}}}
+      </section>
+      <section class="section">
+        <div class="section-header">
+          <h2>Rückkehr</h2>
+        </div>
+        <div class="number-list">
+          {{{settings_numbers}}}
+        </div>
+      </section>
+      <hr class="settings-separator">
+      <section class="section">
+        <div class="section-header">
           <h2>Reiselogik</h2>
         </div>
         <div class="settings-list">
@@ -1147,32 +1338,19 @@
         </div>
         {{{settings_home_map}}}
       </section>
-      <section class="section">
-        <div class="section-header">
-          <h2>Rückkehr</h2>
-        </div>
-        <div class="number-list">
-          {{{settings_numbers}}}
-        </div>
-      </section>
-    </section>
-
-    <section class="tab-panel" data-panel="people">
-      <section class="section">
-        <div class="section-header">
-          <h2>Bewohner</h2>
-          <p>Diese Personen steuern Anwesenheit, Rückkehrfenster und Reisemodus.</p>
-        </div>
-        {{{settings_presence}}}
-      </section>
     </section>
 
     <section class="tab-panel" data-panel="rooms">
       <section class="section">
+        <div class="section-header"><h2>Standard-Reinigung</h2><span class="section-hint">Für Räume ohne eigene Einstellungen</span></div>
+        {{{settings_cleaning_defaults}}}
+      </section>
+      <section class="section">
         <div class="section-header">
           <h2>Räume</h2>
-          <span class="section-hint">Priorität per Ziehen ändern</span>
+          <span class="section-hint">Aktivierung & Intervall</span>
         </div>
+        <p class="room-name-note">Raumnamen gelten nur in GhostVacuum. Die MOVA-App bleibt unverändert.</p>
         <div class="room-list">
           {{{settings_rooms}}}
         </div>
@@ -1189,6 +1367,8 @@
           {{{settings_system}}}
         </div>
       </section>
+
+      <div id="settings-analysis">{{{settings_analysis}}}</div>
 
       <section class="section debug-section">
         <div class="section-header">
@@ -1279,20 +1459,157 @@
       }
     }
 
-    document.querySelectorAll("[data-tab]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const tab = button.dataset.tab;
-        document.querySelectorAll("[data-tab]").forEach((item) => {
-          item.classList.toggle("active", item.dataset.tab === tab);
-        });
-        document.querySelectorAll("[data-panel]").forEach((panel) => {
-          panel.classList.toggle("active", panel.dataset.panel === tab);
-        });
-        if (tab === "return") {
-          requestAnimationFrame(() => refreshHomeMap());
-          setTimeout(refreshHomeMap, 180);
-        }
+    function readProfile(editor) {
+      return Object.fromEntries([...editor.querySelectorAll('[data-profile-key]')].map(field => [field.dataset.profileKey,field.dataset.profileKey === 'repeats' ? Number(field.value) : field.value]));
+    }
+    function fillProfile(editor,profile) {
+      editor.querySelectorAll('[data-profile-key]').forEach(field => field.value = profile[field.dataset.profileKey]);
+    }
+    function updateProfile(editor) {
+      const inherited = editor.querySelector('[data-profile-source]')?.value === 'inherit';
+      if (inherited) fillProfile(editor,JSON.parse(editor.dataset.profileDefaults));
+      const profile = readProfile(editor), genius = profile.mode === 'cleangenius';
+      editor.querySelector('.profile-fields').hidden = inherited;
+      editor.querySelectorAll('[data-profile-field]').forEach(field => {
+        const key = field.dataset.profileField;
+        field.hidden = key !== 'mode' && (genius ? !['genius','sequence'].includes(key) : ['genius','sequence'].includes(key) || (key === 'suction' && profile.mode === 'mopping') || (key === 'moisture' && profile.mode === 'sweeping'));
       });
+      const summary = editor.querySelector('[data-profile-summary]');
+      if (summary) summary.textContent = (inherited ? 'Standard' : 'Eigene Einstellungen') + ' · ' + editor.querySelector('[data-profile-key="mode"]').selectedOptions[0].textContent;
+    }
+    function initProfileEditors(root = document) {
+    root.querySelectorAll('[data-profile-editor]').forEach(editor => {
+      if (editor.dataset.boundProfile) return;
+      editor.dataset.boundProfile = 'true';
+      updateProfile(editor);
+      editor.dataset.savedProfile = JSON.stringify(editor.querySelector('[data-profile-source]')?.value === 'inherit' ? {} : readProfile(editor));
+      editor.addEventListener('change', async event => {
+        if (!event.target.matches('[data-profile-key],[data-profile-source]')) return;
+        updateProfile(editor);
+        const inherited = editor.querySelector('[data-profile-source]')?.value === 'inherit';
+        const value = JSON.stringify(inherited ? {} : readProfile(editor));
+        const controls = [...editor.querySelectorAll('select')];
+        controls.forEach(field => field.disabled = true);
+        try {
+          await postJson('/api/set_text',{entity_id:editor.dataset.entity,value});
+          editor.dataset.savedProfile = value;
+          if (editor.hasAttribute('data-profile-global')) {
+            document.querySelectorAll('.room-cleaning').forEach(room => {room.dataset.profileDefaults = value;updateProfile(room);});
+          }
+          showToast('Reinigungseinstellungen gespeichert');
+        } catch (error) {
+          const saved = JSON.parse(editor.dataset.savedProfile);
+          const source = editor.querySelector('[data-profile-source]');
+          if (source) source.value = Object.keys(saved).length ? 'own' : 'inherit';
+          if (Object.keys(saved).length) fillProfile(editor,saved);
+          updateProfile(editor);
+          showToast(error.message || 'Speichern fehlgeschlagen');
+        } finally {controls.forEach(field => field.disabled = false);}
+      });
+    });
+
+    }
+    initProfileEditors();
+
+    async function refreshRoomSettings() {
+      const list = document.querySelector('[data-panel="rooms"] .room-list');
+      const opened = [...list.querySelectorAll('[data-room-card] details[open]')].map(e => e.closest('[data-room-card]').dataset.roomKey);
+      const scrollY = window.scrollY;
+      try {
+        const response = await fetch(location.pathname, {cache:"no-store"});
+        if (!response.ok) throw new Error("Einstellungen konnten nicht aktualisiert werden");
+        const fresh = new DOMParser().parseFromString(await response.text(), "text/html").querySelector('[data-panel="rooms"] .room-list');
+        if (!fresh) throw new Error("Raumliste fehlt");
+        list.replaceChildren(...fresh.childNodes);
+        list.querySelectorAll('[data-room-card]').forEach(card => {
+          if (opened.includes(card.dataset.roomKey)) card.querySelector("details")?.setAttribute("open", "");
+        });
+        initProfileEditors(list);
+        initRoomDrag();
+        window.scrollTo(0, scrollY);
+      } catch {showToast("Gespeichert. Ansicht konnte nicht aktualisiert werden.");}
+    }
+
+    async function refreshAnalysis() {
+      const panel = document.getElementById('settings-analysis');
+      if (!panel?.closest('[data-panel="system"]').classList.contains('active')) return;
+      try {
+        const response = await fetch(apiUrl("/api/analysis"), {cache:"no-store"});
+        if (response.ok) panel.innerHTML = (await response.json()).html;
+      } catch { /* Keep the last observation visible while offline. */ }
+    }
+    setInterval(refreshAnalysis, 30000);
+
+    function selectSettingsTab(requestedTab) {
+      const buttons = [...document.querySelectorAll('[data-tab]')];
+      const tab = buttons.some(button => button.dataset.tab === requestedTab) ? requestedTab : 'general';
+      buttons.forEach(button => {
+        button.classList.toggle('active', button.dataset.tab === tab);
+        button.setAttribute('aria-pressed', String(button.dataset.tab === tab));
+      });
+      document.querySelectorAll('[data-panel]').forEach(panel => {
+        panel.classList.toggle('active', panel.dataset.panel === tab);
+      });
+      if (tab === 'system') refreshAnalysis();
+      if (tab === 'return') {
+        requestAnimationFrame(() => refreshHomeMap());
+        setTimeout(refreshHomeMap, 180);
+      }
+    }
+    document.querySelectorAll('[data-tab]').forEach(button => {
+      button.addEventListener('click', () => {
+        const tab = button.dataset.tab;
+        history.replaceState(null, '', '#' + tab);
+        selectSettingsTab(tab);
+      });
+    });
+    window.addEventListener('hashchange', () => selectSettingsTab(location.hash.slice(1)));
+    selectSettingsTab(location.hash.slice(1));
+
+    document.addEventListener("change", async (event) => {
+      const radio = event.target.closest("[data-tracking-radio]");
+      if (!radio) return;
+      const picker = radio.closest("[data-tracking-picker]");
+      const radios = [...picker.querySelectorAll("[data-tracking-radio]")];
+      radios.forEach(input => input.disabled = true);
+      try {
+        await postJson("/api/set_text", {entity_id:picker.dataset.entity,value:radio.value});
+        picker.querySelectorAll("[data-tracking-option]").forEach(card => {
+          const active = card.dataset.trackingOption === radio.value;
+          card.classList.toggle("selected", active);
+          card.querySelector(".tracking-availability").textContent = active ? "Aktiv" : card.dataset.available === "true" ? "Verfügbar" : "Nicht verfügbar";
+        });
+        showToast("Gespeichert");
+      } catch (error) {
+        showToast("Konnte nicht speichern");
+        window.location.reload();
+      } finally {
+        radios.forEach(input => input.disabled = input.closest("[data-tracking-option]").dataset.available !== "true");
+      }
+    });
+
+    document.addEventListener("change", async (event) => {
+      const input = event.target.closest("input[data-presence-person]");
+      if (!input) return;
+      const picker = input.closest("[data-presence-picker]");
+      const switches = [...picker.querySelectorAll("input[data-presence-person]")];
+      const selected = switches.filter(item => item.checked);
+      if (!selected.length) {
+        input.checked = true;
+        showToast("Mindestens eine Person erforderlich");
+        return;
+      }
+      switches.forEach(item => item.disabled = true);
+      try {
+        await postJson("/api/set_text", {entity_id:picker.dataset.presenceEntity,value:selected.map(item => item.dataset.presencePerson).join(",")});
+        input.closest(".person-setting").classList.toggle("active", input.checked);
+        showToast("Gespeichert");
+      } catch (error) {
+        input.checked = !input.checked;
+        showToast("Konnte nicht speichern");
+      } finally {
+        switches.forEach(item => item.disabled = false);
+      }
     });
 
     document.addEventListener("change", async (event) => {
@@ -1311,6 +1628,41 @@
       }
     });
 
+    document.querySelectorAll('[data-person-wifi]').forEach(select => select.dataset.savedWifi = select.value);
+    document.addEventListener('change', async event => {
+      const select = event.target.closest('[data-person-wifi]');
+      if (!select) return;
+      select.disabled = true;
+      try {
+        await postJson('/api/person_wifi', {person:select.dataset.personWifi, device:select.value});
+        showToast('WLAN-Gerät gespeichert');
+        select.dataset.savedWifi = select.value;
+        select.disabled = false;
+      } catch (error) {
+        showToast('Gerätezuordnung konnte nicht gespeichert werden');
+        select.value = select.dataset.savedWifi;
+        select.disabled = false;
+      }
+    });
+
+    async function saveCompletion(row) {
+      const mode = row.querySelector("[data-completion-mode]");
+      const input = row.querySelector("[data-completion-value]");
+      row.querySelector("[data-completion-threshold]").hidden = mode.value !== "percent";
+      if (mode.value === "percent" && !input.reportValidity()) return;
+      const value = mode.value === "complete" ? 100 : Number(input.value);
+      try {
+        await postJson("/api/set_number", {entity_id:row.dataset.entity,value});
+        showToast("Gespeichert");
+      } catch {showToast("Konnte nicht speichern");}
+    }
+    document.addEventListener("change", event => {
+      if (event.target.matches("[data-completion-mode]")) saveCompletion(event.target.closest("[data-completion-row]"));
+    });
+    document.addEventListener("blur", event => {
+      if (event.target.matches("[data-completion-value]")) saveCompletion(event.target.closest("[data-completion-row]"));
+    },true);
+
     document.addEventListener("blur", async (event) => {
       const input = event.target.closest("[data-number-entity]");
       if (!input) return;
@@ -1321,6 +1673,10 @@
         value = Number(input.value) * 24;
       } else if (input.type === "time") {
         value = Number(String(input.value || "0").split(":")[0]);
+      }
+      if (["return_buffer","start_margin"].includes(input.dataset.settingKey)) {
+        value = Math.round(value);
+        input.value = String(value);
       }
       row?.classList.add("saving");
       try {
@@ -1370,50 +1726,23 @@
 
       const toggleButton = event.target.closest("button[data-toggle-entity]");
       if (toggleButton) {
+        if (toggleButton.disabled) return;
+        toggleButton.disabled = true;
         const wasActive = toggleButton.classList.contains("on");
         toggleButton.classList.add("saving");
         try {
           await postJson(`/api/toggle?entity_id=${encodeURIComponent(toggleButton.dataset.toggleEntity)}`);
           toggleButton.classList.toggle("on", !wasActive);
           toggleButton.textContent = wasActive ? "Inaktiv" : "Aktiv";
+          const card = toggleButton.closest("[data-room-card]");
+          card?.classList.toggle("inactive", wasActive);
+          if (card) await refreshRoomSettings();
           showToast("Gespeichert");
           toggleButton.classList.remove("saving");
         } catch (error) {
           showToast("Konnte nicht speichern");
           toggleButton.classList.remove("saving");
-        }
-        return;
-      }
-
-      const presenceButton = event.target.closest("[data-presence-person]");
-      if (presenceButton) {
-        const picker = presenceButton.closest("[data-presence-picker]");
-        const buttons = Array.from(picker.querySelectorAll("[data-presence-person]"));
-        presenceButton.classList.toggle("active");
-        presenceButton.setAttribute("aria-pressed", presenceButton.classList.contains("active") ? "true" : "false");
-        const selected = buttons.filter((button) => button.classList.contains("active"));
-        if (!selected.length) {
-          presenceButton.classList.add("active");
-          presenceButton.setAttribute("aria-pressed", "true");
-          showToast("Mindestens eine Person auswählen");
-          return;
-        }
-        buttons.forEach((button) => {
-          const label = button.querySelector("em");
-          if (label) label.textContent = button.classList.contains("active") ? "Berücksichtigt" : "Ignoriert";
-        });
-        picker.classList.add("saving");
-        try {
-          await postJson("/api/set_text", {
-            entity_id: picker.dataset.presenceEntity,
-            value: selected.map((button) => button.dataset.presencePerson).join(",")
-          });
-          showToast("Gespeichert");
-          picker.classList.remove("saving");
-        } catch (error) {
-          showToast("Konnte nicht speichern");
-          window.location.reload();
-        }
+        } finally {toggleButton.disabled = false;}
         return;
       }
 
@@ -1439,329 +1768,153 @@
     function initHomeMap() {
       const card = document.querySelector("[data-home-map]");
       if (!card) return;
+      const positionCanvas = card.querySelector("[data-map-canvas]");
+      const radiusCanvas = card.querySelector("[data-radius-canvas]");
+      const latInput = card.querySelector("[data-map-lat]");
+      const lngInput = card.querySelector("[data-map-lng]");
+      const radiusInput = card.querySelector("[data-map-radius-input]");
+      const coordinates = card.querySelector("[data-map-coordinates]");
+      const save = card.querySelector("[data-save-map]");
       if (typeof L === "undefined") {
-        initFallbackHomeMap(card);
+        [positionCanvas, radiusCanvas].forEach(canvas => canvas.textContent = "Karte konnte nicht geladen werden. Bitte Seite neu laden.");
+        save.disabled = true;
         return;
       }
-
-      const canvas = card.querySelector("[data-map-canvas]");
-      const latInput = card.querySelector("[data-map-lat]");
-      const lngInput = card.querySelector("[data-map-lng]");
-      const radiusInput = card.querySelector("[data-map-radius-input]");
-      const coordinates = card.querySelector("[data-map-coordinates]");
-      const status = card.querySelector("[data-map-status]");
-      const minRadiusKm = 100;
-      const center = [
-        Number(latInput.value) || 0,
-        Number(lngInput.value) || 0
-      ];
-
-      function configuredRadiusKm() {
-        return Math.max(0, Number(radiusInput.value) || 0);
+      let center = L.latLng(Number(latInput.value), Number(lngInput.value));
+      let radiusKm = clamp(Number(radiusInput.value) || 100, 1, 500);
+      const positionMap = L.map(positionCanvas, {zoomControl:true,scrollWheelZoom:true}).setView(center, 17);
+      // This overview always fits the complete circle. User zoom/pan cannot
+      // hide any part of the radius; the position map remains independent.
+      const radiusMap = L.map(radiusCanvas, {zoomControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,touchZoom:false,boxZoom:false,keyboard:false,zoomSnap:0,zoomAnimation:false}).setView(center,6);
+      [positionMap, radiusMap].forEach(map => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {maxZoom:19,attribution:"&copy; OpenStreetMap"}).addTo(map));
+      const homeIcon = L.divIcon({className:"home-marker-icon",html:"<span aria-hidden='true'></span>",iconSize:[16,16],iconAnchor:[8,8]});
+      const positionMarker = L.marker(center, {draggable:true,icon:homeIcon,title:"Wohnungsposition verschieben"}).addTo(positionMap);
+      const radiusMarker = L.marker(center, {icon:homeIcon,title:"Wohnungsposition"}).addTo(radiusMap);
+      const circle = L.circle(center, {radius:radiusKm*1000,color:"#227a55",weight:2,fillColor:"#227a55",fillOpacity:0.14}).addTo(radiusMap);
+      function radiusPoint() {
+        const distance = radiusKm / 6371;
+        const lat = center.lat * Math.PI / 180;
+        const lng = center.lng * Math.PI / 180;
+        const nextLat = Math.asin(Math.sin(lat) * Math.cos(distance));
+        const nextLng = lng + Math.atan2(Math.sin(distance) * Math.cos(lat),Math.cos(distance)-Math.sin(lat)*Math.sin(nextLat));
+        return L.latLng(nextLat*180/Math.PI,nextLng*180/Math.PI);
       }
-
-      function visibleRadiusKm() {
-        return Math.max(minRadiusKm, configuredRadiusKm() || minRadiusKm);
+      const handleIcon = L.divIcon({className:"radius-handle-icon",iconSize:[18,18],iconAnchor:[9,9]});
+      const radiusHandle = L.marker(radiusPoint(),{icon:handleIcon,title:"Reiseradius ändern",zIndexOffset:1000}).addTo(radiusMap);
+      function fitRadius() {
+        if (!radiusCanvas.clientWidth || !radiusCanvas.clientHeight) return;
+        radiusMap.invalidateSize({pan:false});
+        radiusMap.setMaxZoom(19);
+        radiusMap.fitBounds(circle.getBounds(), {padding:[18,18],animate:false});
+        radiusMap.setMaxZoom(radiusMap.getZoom());
       }
-
-      const initialZoom = 9;
-      let focusedHomePoint = false;
-      const leafletMap = L.map(canvas, {
-        zoomControl: true,
-        scrollWheelZoom: true,
-        tap: true
-      }).setView(center, initialZoom);
-
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: "&copy; OpenStreetMap"
-      }).addTo(leafletMap);
-
-      const homeIcon = L.divIcon({
-        className: "home-marker-icon",
-        html: "<span aria-hidden=\"true\"></span>",
-        iconSize: [16, 16],
-        iconAnchor: [8, 8]
+      function syncCenter(latlng, recenterPosition = false) {
+        center = L.latLng(latlng);
+        latInput.value = center.lat.toFixed(6);
+        lngInput.value = center.lng.toFixed(6);
+        positionMarker.setLatLng(center);
+        radiusMarker.setLatLng(center);
+        circle.setLatLng(center);
+        radiusHandle.setLatLng(radiusPoint());
+        coordinates.textContent = [center.lat,center.lng].map(value => value.toLocaleString("de-DE",{maximumFractionDigits:6})).join(" · ");
+        const title = `Wohnungsposition ${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}`;
+        positionMarker.getElement()?.setAttribute("title",title);
+        radiusMarker.getElement()?.setAttribute("title",title);
+        if (recenterPosition) positionMap.panTo(center,{animate:false});
+        fitRadius();
+      }
+      positionMarker.on("drag", () => syncCenter(positionMarker.getLatLng()));
+      positionMarker.on("dragend", () => syncCenter(positionMarker.getLatLng(),true));
+      positionMap.on("click", event => syncCenter(event.latlng,true));
+      function setRadius(value, fit = true) {
+        const nextRadius = clamp(Math.round(value),1,500);
+        if (nextRadius === radiusKm) return;
+        radiusKm = nextRadius;
+        radiusInput.value = radiusKm;
+        circle.setRadius(radiusKm*1000);
+        radiusHandle.setLatLng(radiusPoint());
+        if (fit) fitRadius();
+      }
+      radiusInput.addEventListener("input", () => {
+        if (!radiusInput.checkValidity() || !radiusInput.value) return;
+        setRadius(Number(radiusInput.value));
       });
-      const marker = L.marker(center, { draggable: true, icon: homeIcon }).addTo(leafletMap);
-      const circle = L.circle(center, {
-        radius: visibleRadiusKm() * 1000,
-        color: "#227a55",
-        weight: 2,
-        fillColor: "#227a55",
-        fillOpacity: 0.14
-      }).addTo(leafletMap);
-      const radiusGuide = L.polyline([center, center], {
-        color: "#145b3d",
-        dashArray: "6 8",
-        interactive: false,
-        opacity: 0.72,
-        weight: 2
-      }).addTo(leafletMap);
-      const handleIcon = L.divIcon({
-        className: "radius-handle-icon",
-        iconSize: [18, 18],
-        iconAnchor: [9, 9]
-      });
-      const radiusHandle = L.marker(center, {
-        draggable: true,
-        icon: handleIcon,
-        zIndexOffset: 1000
-      }).addTo(leafletMap);
-
-      function destinationEast(latLng, distanceKm) {
-        const earthRadiusKm = 6371;
-        const bearing = Math.PI / 2;
-        const distance = distanceKm / earthRadiusKm;
-        const lat1 = latLng.lat * Math.PI / 180;
-        const lng1 = latLng.lng * Math.PI / 180;
-        const lat2 = Math.asin(
-          Math.sin(lat1) * Math.cos(distance) +
-          Math.cos(lat1) * Math.sin(distance) * Math.cos(bearing)
-        );
-        const lng2 = lng1 + Math.atan2(
-          Math.sin(bearing) * Math.sin(distance) * Math.cos(lat1),
-          Math.cos(distance) - Math.sin(lat1) * Math.sin(lat2)
-        );
-        return L.latLng(lat2 * 180 / Math.PI, lng2 * 180 / Math.PI);
-      }
-
-      function updateStatus() {
-        const configured = configuredRadiusKm();
-        const visible = visibleRadiusKm();
-        const coordinateText = [Number(latInput.value), Number(lngInput.value)]
-          .map((value) => value.toLocaleString("de-DE", { maximumFractionDigits: 6 }))
-          .join(" · ");
-        const radiusText = configured > 0 && configured < minRadiusKm
-          ? `Radius ${configured.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km · Karte zeigt min. ${minRadiusKm} km`
-          : `Radius ${visible.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`;
-        coordinates.textContent = coordinateText;
-        status.textContent = radiusText;
-      }
-
-      function syncCircle(options = {}) {
-        const centerLatLng = marker.getLatLng();
-        const radiusKm = visibleRadiusKm();
-        latInput.value = centerLatLng.lat.toFixed(6);
-        lngInput.value = centerLatLng.lng.toFixed(6);
-        circle.setLatLng(centerLatLng);
-        circle.setRadius(radiusKm * 1000);
-        const handleLatLng = destinationEast(centerLatLng, radiusKm);
-        radiusHandle.setLatLng(handleLatLng);
-        radiusGuide.setLatLngs([centerLatLng, handleLatLng]);
-        updateStatus();
-        if (options.fit) {
-          leafletMap.invalidateSize();
-          leafletMap.fitBounds(circle.getBounds(), { padding: [24, 24], animate: true });
-        }
-      }
-
-      marker.on("drag", () => syncCircle());
-      marker.on("dragend", () => syncCircle());
-
-      radiusHandle.on("drag", () => {
-        const radiusKm = Math.max(minRadiusKm, marker.getLatLng().distanceTo(radiusHandle.getLatLng()) / 1000);
-        radiusInput.value = radiusKm.toFixed(1);
-        circle.setRadius(radiusKm * 1000);
-        radiusGuide.setLatLngs([marker.getLatLng(), radiusHandle.getLatLng()]);
-        updateStatus();
-      });
-      radiusHandle.on("dragend", () => syncCircle({ fit: true }));
-
-      leafletMap.on("click", (event) => {
-        marker.setLatLng(event.latlng);
-        syncCircle();
-      });
-
-      refreshHomeMap = () => {
-        leafletMap.invalidateSize();
-        syncCircle();
-        if (!focusedHomePoint) {
-          leafletMap.setView(marker.getLatLng(), initialZoom, { animate: false });
-          focusedHomePoint = true;
-        }
-      };
-      requestAnimationFrame(refreshHomeMap);
-      setTimeout(refreshHomeMap, 180);
-
-      card.querySelector("[data-save-map]").addEventListener("click", async () => {
-        try {
-          await postJson("/api/set_number", { entity_id: card.dataset.latEntity, value: Number(latInput.value) });
-          await postJson("/api/set_number", { entity_id: card.dataset.lngEntity, value: Number(lngInput.value) });
-          await postJson("/api/set_number", { entity_id: card.dataset.radiusEntity, value: configuredRadiusKm() });
-          showToast("Karte gespeichert");
-        } catch (error) {
-          showToast("Karte konnte nicht gespeichert werden");
-        }
-      });
-    }
-
-    initHomeMap();
-
-    function initFallbackHomeMap(card) {
-      const canvas = card.querySelector("[data-map-canvas]");
-      const latInput = card.querySelector("[data-map-lat]");
-      const lngInput = card.querySelector("[data-map-lng]");
-      const radiusInput = card.querySelector("[data-map-radius-input]");
-      const coordinates = card.querySelector("[data-map-coordinates]");
-      const status = card.querySelector("[data-map-status]");
-      const minRadiusKm = 100;
-      let scale = 1.2;
-      let draggingMarker = false;
-      let resizingRadius = false;
-      let panning = false;
-      let panStart = null;
-      let center = { x: 0, y: 0 };
-      let markerPoint = { x: 0, y: 0 };
-
-      canvas.classList.add("fallback-map");
-      canvas.innerHTML = `
-        <div class="fallback-radius" data-fallback-radius>
-          <button class="fallback-radius-handle" type="button" data-fallback-radius-handle aria-label="Reise-Radius ändern"></button>
-        </div>
-        <div class="fallback-radius-guide" data-fallback-radius-guide></div>
-        <button class="fallback-marker" type="button" data-fallback-marker aria-label="Home-Punkt verschieben"></button>
-      `;
-      const marker = canvas.querySelector("[data-fallback-marker]");
-      const radius = canvas.querySelector("[data-fallback-radius]");
-      const guide = canvas.querySelector("[data-fallback-radius-guide]");
-      const handle = canvas.querySelector("[data-fallback-radius-handle]");
-
-      function configuredRadiusKm() {
-        return Math.max(0, Number(radiusInput.value) || 0);
-      }
-
-      function visibleRadiusKm() {
-        return Math.max(minRadiusKm, configuredRadiusKm() || minRadiusKm);
-      }
-
-      function resetPoints() {
-        const rect = canvas.getBoundingClientRect();
-        center = { x: rect.width / 2, y: rect.height / 2 };
-        markerPoint = { ...center };
-        scale = Math.max(0.35, Math.min(rect.width, rect.height) / (visibleRadiusKm() * 2.35));
-      }
-
-      function updateStatus() {
-        const configured = configuredRadiusKm();
-        const visible = visibleRadiusKm();
-        const coordinateText = [Number(latInput.value), Number(lngInput.value)]
-          .map((value) => value.toLocaleString("de-DE", { maximumFractionDigits: 6 }))
-          .join(" · ");
-        const radiusText = configured > 0 && configured < minRadiusKm
-          ? `Radius ${configured.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km · Karte zeigt min. ${minRadiusKm} km`
-          : `Radius ${visible.toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`;
-        coordinates.textContent = coordinateText;
-        status.textContent = radiusText;
-      }
-
-      function updateFallback() {
-        const radiusPx = visibleRadiusKm() * scale * 2;
-        marker.style.left = `${markerPoint.x}px`;
-        marker.style.top = `${markerPoint.y}px`;
-        radius.style.left = `${markerPoint.x}px`;
-        radius.style.top = `${markerPoint.y}px`;
-        radius.style.width = `${radiusPx}px`;
-        radius.style.height = `${radiusPx}px`;
-        guide.style.left = `${markerPoint.x}px`;
-        guide.style.top = `${markerPoint.y}px`;
-        guide.style.width = `${radiusPx / 2}px`;
-        updateStatus();
-      }
-
-      function pointToInputs(point) {
-        const kmPerDegreeLat = 111.32;
-        const kmPerDegreeLng = Math.max(12, 111.32 * Math.cos((Number(latInput.value) || 0) * Math.PI / 180));
-        latInput.value = (Number(latInput.value) - (point.y - markerPoint.y) / scale / kmPerDegreeLat).toFixed(6);
-        lngInput.value = (Number(lngInput.value) + (point.x - markerPoint.x) / scale / kmPerDegreeLng).toFixed(6);
-      }
-
-      marker.addEventListener("pointerdown", (event) => {
-        draggingMarker = true;
-        marker.setPointerCapture(event.pointerId);
-      });
-      marker.addEventListener("pointermove", (event) => {
-        if (!draggingMarker) return;
-        const rect = canvas.getBoundingClientRect();
-        const nextPoint = {
-          x: clamp(event.clientX - rect.left, 12, rect.width - 12),
-          y: clamp(event.clientY - rect.top, 12, rect.height - 12)
-        };
-        pointToInputs(nextPoint);
-        markerPoint = nextPoint;
-        updateFallback();
-      });
-      marker.addEventListener("pointerup", () => {
-        draggingMarker = false;
-      });
-
-      handle.addEventListener("pointerdown", (event) => {
-        resizingRadius = true;
+      // Project pointer movement at the zoom from drag start. Automatic fitting
+      // must not feed the changing map scale back into the radius calculation.
+      const handle = radiusHandle.getElement();
+      handle.style.touchAction = "none";
+      let radiusDrag = null;
+      handle.addEventListener("pointerdown", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const zoom = radiusMap.getZoom();
+        radiusDrag = {x:event.clientX,y:event.clientY,zoom,point:radiusMap.project(radiusHandle.getLatLng(),zoom)};
         handle.setPointerCapture(event.pointerId);
       });
-      handle.addEventListener("pointermove", (event) => {
-        if (!resizingRadius) return;
-        const rect = canvas.getBoundingClientRect();
-        const x = clamp(event.clientX - rect.left, 0, rect.width);
-        const y = clamp(event.clientY - rect.top, 0, rect.height);
-        const distancePx = Math.hypot(x - markerPoint.x, y - markerPoint.y);
-        radiusInput.value = Math.max(minRadiusKm, distancePx / scale).toFixed(1);
-        updateFallback();
+      handle.addEventListener("pointermove", event => {
+        if (!radiusDrag) return;
+        event.preventDefault();
+        const point = radiusDrag.point.add(L.point(event.clientX-radiusDrag.x,event.clientY-radiusDrag.y));
+        const location = radiusMap.unproject(point,radiusDrag.zoom);
+        setRadius(center.distanceTo(location)/1000, false);
       });
-      handle.addEventListener("pointerup", () => {
-        resizingRadius = false;
-        resetPoints();
-        updateFallback();
+      const finishRadiusDrag = () => {
+        if (!radiusDrag) return;
+        radiusDrag = null;
+        fitRadius();
+      };
+      handle.addEventListener("pointerup",finishRadiusDrag);
+      handle.addEventListener("pointercancel",finishRadiusDrag);
+      handle.addEventListener("lostpointercapture",finishRadiusDrag);
+      handle.addEventListener("keydown",event => {
+        if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) return;
+        event.preventDefault();
+        setRadius(radiusKm + (['ArrowRight','ArrowUp'].includes(event.key)?1:-1)*(event.shiftKey?10:1));
       });
-
-      canvas.addEventListener("pointerdown", (event) => {
-        if (event.target === marker || event.target === handle) return;
-        panning = true;
-        panStart = { x: event.clientX, y: event.clientY };
-        canvas.setPointerCapture(event.pointerId);
-      });
-      canvas.addEventListener("pointermove", (event) => {
-        if (!panning || !panStart) return;
-        const dx = event.clientX - panStart.x;
-        const dy = event.clientY - panStart.y;
-        markerPoint.x += dx;
-        markerPoint.y += dy;
-        center.x += dx;
-        center.y += dy;
-        panStart = { x: event.clientX, y: event.clientY };
-        updateFallback();
-      });
-      canvas.addEventListener("pointerup", () => {
-        panning = false;
-        panStart = null;
-      });
-
-      card.querySelector("[data-save-map]").addEventListener("click", async () => {
+      card.querySelectorAll("[data-map-tab]").forEach(button => button.addEventListener("click",() => {
+        card.querySelectorAll("[data-map-tab]").forEach(tab => tab.setAttribute("aria-selected",String(tab===button)));
+        card.querySelectorAll("[data-map-panel]").forEach(panel => panel.classList.toggle("map-panel-active",panel.dataset.mapPanel===button.dataset.mapTab));
+        requestAnimationFrame(refreshHomeMap);
+      }));
+      refreshHomeMap = () => {
+        positionMap.invalidateSize({pan:false});
+        positionMap.setView(center,positionMap.getZoom(),{animate:false});
+        radiusMap.setMaxZoom(19);
+        syncCenter(center);
+      };
+      const observer = new ResizeObserver(refreshHomeMap);
+      observer.observe(positionCanvas);
+      observer.observe(radiusCanvas);
+      refreshHomeMap();
+      save.addEventListener("click", async () => {
+        if (!radiusInput.reportValidity()) return;
+        save.disabled = true;
         try {
-          await postJson("/api/set_number", { entity_id: card.dataset.latEntity, value: Number(latInput.value) });
-          await postJson("/api/set_number", { entity_id: card.dataset.lngEntity, value: Number(lngInput.value) });
-          await postJson("/api/set_number", { entity_id: card.dataset.radiusEntity, value: configuredRadiusKm() });
-          showToast("Karte gespeichert");
+          await postJson("/api/set_number",{entity_id:card.dataset.latEntity,value:Number(latInput.value)});
+          await postJson("/api/set_number",{entity_id:card.dataset.lngEntity,value:Number(lngInput.value)});
+          await postJson("/api/set_number",{entity_id:card.dataset.radiusEntity,value:Number(radiusInput.value)});
+          showToast("Wohnungsposition und Radius gespeichert");
         } catch (error) {
-          showToast("Karte konnte nicht gespeichert werden");
-        }
+          showToast("Konnte nicht speichern");
+        } finally {save.disabled = false;}
       });
-
-      resetPoints();
-      updateFallback();
     }
+    initHomeMap();
 
     function initRoomDrag() {
-      const list = document.querySelector('[data-panel="rooms"] .room-list');
+      const list = document.querySelector('[data-room-group="active"]');
       if (!list) return;
       let dragged = null;
       let placeholder = null;
       let initialOrder = "";
+      let savingOrder = false;
 
       function updateRanks() {
         list.querySelectorAll("[data-room-card]").forEach((card, index) => {
           const rank = card.querySelector(".room-settings-head strong span");
           if (rank) rank.textContent = `${index + 1}.`;
+          card.querySelector('[data-room-move="up"]').disabled = index === 0;
+          card.querySelector('[data-room-move="down"]').disabled = index === list.querySelectorAll('[data-room-card]').length - 1;
         });
       }
 
@@ -1790,6 +1943,38 @@
         }, { offset: Number.NEGATIVE_INFINITY, card: null }).card;
       }
 
+      async function saveRoomOrder() {
+        savingOrder = true;
+        const cards = Array.from(list.querySelectorAll('[data-room-card]'));
+        const changed = [];
+        try {
+          for (const [index, card] of cards.entries()) {
+            const weight = Math.round((3 - index * 2.9 / Math.max(1, cards.length - 1)) * 20) / 20;
+            if (Number(card.dataset.weight) === weight) continue;
+            await postJson('/api/set_number', {entity_id:card.dataset.weightEntity,value:weight});
+            changed.push(card);
+          }
+          showToast('Priorität gespeichert');
+          await refreshRoomSettings();
+        } catch {
+          for (const card of changed.reverse()) {
+            try {await postJson('/api/set_number', {entity_id:card.dataset.weightEntity,value:Number(card.dataset.weight)});} catch {}
+          }
+          showToast('Speichern fehlgeschlagen. Priorität wird aktualisiert.');
+          await refreshRoomSettings();
+        } finally {savingOrder = false;}
+      }
+      list.addEventListener('click', event => {
+        const button = event.target.closest('[data-room-move]');
+        if (!button || savingOrder) return;
+        const card = button.closest('[data-room-card]');
+        if (button.dataset.roomMove === 'up' && card.previousElementSibling) list.insertBefore(card,card.previousElementSibling);
+        if (button.dataset.roomMove === 'down' && card.nextElementSibling) card.nextElementSibling.after(card);
+        updateRanks();
+        saveRoomOrder();
+      });
+      updateRanks();
+
       function finishDrag(saveOrder) {
         if (dragged && placeholder?.parentNode) {
           if (saveOrder) placeholder.parentNode.insertBefore(dragged, placeholder);
@@ -1802,13 +1987,13 @@
         initialOrder = "";
         if (changed) {
           updateRanks();
-          showToast("Reihenfolge aktualisiert");
+          saveRoomOrder();
         }
       }
 
       list.addEventListener("dragstart", (event) => {
         const grip = event.target.closest(".room-drag-cue");
-        if (!grip) return;
+        if (!grip || savingOrder) {event.preventDefault(); return;}
         const card = grip.closest("[data-room-card]");
         if (!card) return;
         dragged = card;

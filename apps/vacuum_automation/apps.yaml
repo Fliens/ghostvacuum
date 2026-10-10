@@ -5,6 +5,13 @@ vacuum_automation:
   module: vacuum_automation
   class: VacuumAutomation
 
+  # Observation only: publish diagnostics, block every service and cleaning start.
+  observation_mode: true
+  # Conservative technical prerequisites; these are not a validated motion release.
+  minimum_start_battery: 30
+  robot_state_max_age_sec: 300
+  start_confirmation_timeout_sec: 120
+
   # Required
   vacuum_entity: vacuum.robot_vacuum
   notify_service: notify.mobile_app_phone
@@ -50,6 +57,7 @@ vacuum_automation:
   end_hour_entity: input_number.vacuum_automation_end_hour
   active_weekdays_entity: input_text.vacuum_automation_active_weekdays
   return_buffer_entity: input_number.vacuum_automation_return_buffer
+  start_margin_entity: input_number.vacuum_automation_start_margin
   fallback_speed_entity: input_number.vacuum_automation_fallback_speed
   default_travel_time_entity: input_number.vacuum_automation_default_travel_time
 
