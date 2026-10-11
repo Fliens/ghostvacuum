@@ -396,3 +396,92 @@ header .observation-label{font-size:11px;color:#60715b}.live-updated{font-size:1
 
 .room-name-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 7px}
 .room-name-line .due-pill{font-weight:400;font-size:8px}
+
+/* Independent station drying indicators, without button styling. */
+.now>.drying-status{grid-column:1/-1;grid-row:8;display:flex;gap:24px;padding-top:12px;margin-top:12px;border-top:1px solid #ffffff20}
+.drying-item{display:grid;justify-items:center;gap:4px;color:#9cb1a3;min-width:70px;font-size:10px}
+.drying-item svg{width:26px;height:30px;overflow:visible}
+.drying-item b{font-weight:500;font-size:11px}
+.drying-item.is-active{color:var(--accent)}
+.drying-item .drying-heat{opacity:0}
+.drying-item.is-active .drying-heat{animation:drying-heat 1.8s ease-in-out infinite}
+@keyframes drying-heat{0%,100%{opacity:.25;transform:translateY(1px)}50%{opacity:1;transform:translateY(-2px)}}
+@media(prefers-reduced-motion:reduce){.drying-item.is-active .drying-heat{animation:none;opacity:1}}
+@media(max-width:760px){
+ .grid{grid-template-rows:max-content max-content max-content}
+ .now{display:grid;grid-template-columns:minmax(0,1fr) 31%;column-gap:10px;grid-template-rows:repeat(6,auto)}
+ .now>.section{grid-column:1/-1;grid-row:1}
+ .now>.status{grid-column:1;grid-row:2;max-width:none}
+ .now>#status-sub{grid-column:1;grid-row:3;max-width:none}
+ .now>.progress{grid-column:1;grid-row:4;width:100%}
+ .now>.split{grid-column:1;grid-row:5;max-width:none}
+ .now>.controls{position:static;grid-column:2;grid-row:2/6;align-self:center;width:100%}
+ .now>.drying-status{grid-row:6;padding-top:9px;margin-top:10px;gap:20px}
+}
+
+/* Compact station indicators beside the robot status. */
+.now>.drying-status{position:absolute;top:48px;right:16px;display:flex;gap:12px;padding:0;margin:0;border:0;z-index:1}
+.drying-item{min-width:48px;gap:2px;font-size:8px}
+.drying-item svg{width:20px;height:24px}
+.drying-item b{font-size:9px}
+.now>.robot-area{display:none}
+.now>.status,.now>#status-sub{max-width:calc(100% - 130px)}
+@media(min-width:761px){
+ .now{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(35px,auto) auto auto auto auto}
+ .now>.status,.now>#status-sub{grid-column:1}
+}
+@media(max-width:760px){
+ .now>.drying-status{top:32px;right:12px;gap:9px}
+ .now>.status,.now>#status-sub{max-width:calc(100% - 114px);grid-column:1/-1}
+ .now>.controls{grid-row:4/6}
+ .now>.status{min-height:24px}
+ .now>#status-sub{min-height:22px}
+}
+.now>.drying-status{grid-row:auto;grid-column:auto}
+
+.now>.drying-status{display:grid;grid-template-columns:repeat(2,48px);gap:3px 12px}
+.drying-heading{grid-column:1/-1;text-align:center;font-size:9px;color:#bdd0c3;line-height:1.2}
+@media(max-width:760px){.now>.drying-status{top:28px;gap:3px 9px}}
+
+.now>.drying-status{border:1px solid #ffffff26;border-radius:9px;padding:5px 6px;top:42px;right:10px}
+@media(max-width:760px){
+ .now>.drying-status{top:25px;right:8px;padding:4px 5px;gap:1px 6px;grid-template-columns:repeat(2,45px)}
+ .now>.drying-status .drying-item{min-width:45px}
+ .now>.controls{margin-top:7px}
+}
+@media(max-width:760px){.now>.controls{margin-top:24px}}
+
+/* Keep each drying time on one line, including hours and minutes. */
+.now>.drying-status{grid-template-columns:repeat(2,max-content)}
+.drying-item b{white-space:nowrap}
+@media(max-width:760px){
+ .now>.drying-status .drying-item{min-width:48px}
+ .now>.status,.now>#status-sub{max-width:calc(100% - 130px)}
+}
+
+.drying-spinner{opacity:0;stroke-width:1;stroke-dasharray:58 24;transform-origin:12px 12px}
+.drying-item.is-active .drying-spinner{opacity:.8;animation:drying-spin 2.5s linear infinite}
+@keyframes drying-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.drying-item.is-active .drying-spinner{animation:none}}
+
+/* Use one square viewport and the same optical centre for icon and ring. */
+.drying-item svg{width:24px;height:24px}
+.drying-spinner{transform-box:fill-box;transform-origin:center}
+
+.schedule-pill{font-size:9px;font-weight:600;padding:3px 7px;gap:4px;box-shadow:none}
+.schedule-pill:before{font-size:9px}
+
+/* A quiet, gently changing arc instead of a rigid spinner. */
+.drying-item.is-active .drying-spinner{stroke-width:.85;animation:drying-flow 5s ease-in-out infinite}
+@keyframes drying-flow{
+  0%{transform:rotate(0deg);stroke-dasharray:26 56;opacity:.35}
+  50%{transform:rotate(170deg);stroke-dasharray:45 37;opacity:.55}
+  100%{transform:rotate(360deg);stroke-dasharray:26 56;opacity:.35}
+}
+@media(prefers-reduced-motion:reduce){.drying-item.is-active .drying-spinner{animation:none;opacity:.4}}
+
+/* Continuous rotation; only the arc length and opacity ease in and out. */
+.drying-item.is-active .drying-spinner{animation:drying-turn 5s linear infinite,drying-arc 5s ease-in-out infinite}
+@keyframes drying-turn{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes drying-arc{0%,100%{stroke-dasharray:26 56;opacity:.35}50%{stroke-dasharray:45 37;opacity:.55}}
+@media(prefers-reduced-motion:reduce){.drying-item.is-active .drying-spinner{animation:none;opacity:.4}}

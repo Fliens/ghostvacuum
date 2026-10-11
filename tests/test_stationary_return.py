@@ -18,6 +18,26 @@ class StationaryMotion(unittest.TestCase):
         self.position['attributes'].update(latitude=lat,gps_accuracy=accuracy)
         return self.app._person_motion('person.a',presence,distance,eta)
 
+    def test_gap_freezes_progress_and_same_spot_resumes_without_counting_gap(self):
+        self.report(0)
+        self.assertEqual(self.report(3)['stay_minutes'],3)
+        paused=self.report(15,presence='unknown')
+        self.assertEqual(paused['stay_minutes'],3)
+        self.assertTrue(paused['stay_paused'])
+        self.assertFalse(paused['stationary'])
+        self.assertEqual(self.report(20)['stay_minutes'],3)
+        self.assertTrue(self.report(27)['stationary'])
+
+    def test_recovery_requires_distinct_report_and_movement_resets_dwell(self):
+        self.report(0);self.report(10)
+        self.app._person_motion('person.a','unknown',None,None)
+        self.assertFalse(self.app._person_motion('person.a','away',.5,7)['stationary'])
+        self.assertTrue(self.report(20)['stationary'])
+        self.report(21,presence='unknown')
+        result=self.report(22,lat=52.004,distance=.4)
+        self.assertEqual(result['stay_minutes'],0)
+        self.assertEqual(result['motion'],'approaching')
+
     def test_buffer_does_not_collect_dwell_and_reentry_starts_fresh(self):
         self.report(0)
         self.assertTrue(self.report(10)['stationary'])
@@ -86,6 +106,39 @@ class StationaryMotion(unittest.TestCase):
 
 class StationaryPolicy(unittest.TestCase):
     setUp = ReturnPolicy.setUp
+    def test_missing_location_blocks_starts_but_not_running_job(self):
+        for person in ({'presence':'unknown','travel_time_min':None},
+                       {'presence':'away','travel_time_min':None}):
+            self.people=[person]
+            self.assertFalse(self.a._return_policy()['allowed'])
+            self.assertTrue(self.a._return_policy(True)['allowed'])
+            self.assertTrue(self.a._return_policy(True)['location_missing'])
+            for other,reason in (({'presence':'home','travel_time_min':0},'Person zuhause'),
+                                 ({'presence':'away','travel_time_min':4},'Puffergrenze erreicht')):
+                self.people=[person,other]
+                self.assertEqual(self.a._return_policy(True)['reason'],reason)
+        self.people=[{'presence':'unknown','travel_time_min':None}]
+        self.a.datetime=lambda aware=False:datetime(2026,10,10,23,tzinfo=timezone.utc)
+        self.assertFalse(self.a._return_policy(True)['allowed'])
+
+    def test_monitor_continues_and_records_each_gap_once(self):
+        from unittest.mock import Mock
+        self.a.args['observation_mode']=False
+        self.a._observe_active_job=Mock();self.a._publish_dashboard_state=Mock()
+        self.a._abort_cleaning=Mock();self.a._audit_event=Mock()
+        self.a._vacuum_job_problem=None;self.a.active_room='office'
+        self.people=[{'presence':'unknown','travel_time_min':None}]
+        self.a._monitor_active_job({});self.a._monitor_active_job({})
+        self.a._abort_cleaning.assert_not_called()
+        self.assertEqual(self.a._audit_event.call_count,1)
+        self.people=[{'presence':'away','travel_time_min':15}]
+        self.a._monitor_active_job({})
+        self.people=[{'presence':'unknown','travel_time_min':None}]
+        self.a._monitor_active_job({})
+        self.assertEqual([c.args[0] for c in self.a._audit_event.call_args_list],
+                         ['location_gap','location_restored','location_gap'])
+        self.a._abort_cleaning.assert_not_called()
+
     def test_cafe_release_and_all_other_safety_gates(self):
         self.people=[{'presence':'away','travel_time_min':7,'stationary':True}]
         self.assertTrue(self.a._return_policy()['allowed'])

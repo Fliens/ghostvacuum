@@ -91,7 +91,36 @@ class LiveDashboard(unittest.TestCase):
             robot = dashboard.build_live_dashboard_view(summary)['robot']
             self.assertFalse(robot['cleaning'])
             self.assertNotIn('Reinigt', robot['title'])
-            self.assertEqual(robot['subtitle'], 'Reinigung abgeschlossen')
+            self.assertEqual(robot['subtitle'], 'An der Station' if state == 'drying' else 'Reinigung abgeschlossen')
+
+    def test_mop_drying_remaining_uses_sensor_minutes_or_raw_seconds(self):
+        summary=self.summary()
+        summary['states']['vacuum'].update(state='docked')
+        summary['states']['vacuum']['attributes'].update(drying=True,drying_left=1800)
+        summary['states']['robot']={'signals':{'drying_left':{'state':'25'}}}
+        robot=dashboard.build_live_dashboard_view(summary)['robot']
+        self.assertEqual(robot['title'],'Angedockt')
+        self.assertEqual(robot['drying'][0]['minutes'],25)
+        self.assertTrue(robot['drying'][0]['active'])
+        summary['states']['robot']['signals']['drying_left']['state']='unavailable'
+        self.assertEqual(dashboard.build_live_dashboard_view(summary)['robot']['drying'][0]['minutes'],30)
+        summary['states']['vacuum']['attributes']['drying_left']=float('nan')
+        self.assertIsNone(dashboard.build_live_dashboard_view(summary)['robot']['drying'][0]['minutes'])
+
+    def test_bin_drying_is_not_mop_drying_and_never_overrides_cleaning(self):
+        summary=self.summary()
+        summary['options']={'dust_collection_type':'container'}
+        vacuum=summary['states']['vacuum']
+        vacuum.update(state='docked')
+        vacuum['attributes'].update(drying=False,dust_bag_drying=True,dust_bag_drying_left=7200)
+        summary['states']['robot']={'signals':{'state':{'state':'drying'}}}
+        robot=dashboard.build_live_dashboard_view(summary)['robot']
+        self.assertEqual(robot['title'],'Angedockt')
+        self.assertFalse(robot['drying'][0]['active'])
+        self.assertTrue(robot['drying'][1]['active'])
+        self.assertEqual(robot['drying'][1]['minutes'],120)
+        vacuum.update(state='cleaning')
+        self.assertNotIn('Staubkasten',dashboard.build_live_dashboard_view(summary)['robot']['title'])
 
     def test_owned_room_is_active_during_initial_mop_preparation(self):
         summary=self.summary()

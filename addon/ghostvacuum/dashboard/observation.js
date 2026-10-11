@@ -69,6 +69,11 @@
     const water = metric('Festwasseranschluss');
     const stationInfo = [water ? 'Festwasser' : null, mop ? 'Mop '+mop.value : null].filter(Boolean).join(' · ') || 'Status nicht verfügbar';
     $('device').innerHTML = `<div><b>${esc(robot.battery)}</b><span>Akku</span></div><div><b>Station ${esc(base?.value || 'unbekannt')}</b><span>${esc(stationInfo)}</span></div><div><b>${esc(dust?.label || 'Staubbehälter')}</b><span>${esc(dust?.value || 'Füllstand unbekannt')}</span></div>`;
+    const dryingIcons = {
+      mops: '<path fill="currentColor" stroke="none" fill-rule="evenodd" d="M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM14 12a2 2 0 1 0-4 0 2 2 0 0 0 4 0Z"/>',
+      bag: '<path transform="translate(0 -1)" d="M9 5h6l-1 3c4 2 6 5 6 9 0 3-3 4-8 4s-8-1-8-4c0-4 2-7 6-9zM9 8h6"/>'
+    };
+    $('drying-status').innerHTML = '<span class="drying-heading">Trocknung</span>' + (robot.drying || []).map(d => `<div class="drying-item ${d.active?'is-active':''}" aria-label="${esc(d.label)} trocknen: ${esc(d.state)}${numeric(d.minutes)?', noch '+d.minutes+' Minuten':''}"><svg viewBox="-3 -3 30 30" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${dryingIcons[d.kind] || dryingIcons.bag}<circle class="drying-spinner" cx="12" cy="12" r="13"/></svg><b>${d.active ? numeric(d.minutes) ? (d.minutes <= 60 ? d.minutes+' min' : Math.floor(d.minutes/60)+' h '+(d.minutes%60)+' min') : 'Restzeit unbekannt' : esc(d.state)}</b></div>`).join('');
     const permission = model.cleaning_permission;
     $('permission-title').textContent = permission.title;
     $('permission-reason').textContent = permission.reason;

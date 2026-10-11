@@ -788,7 +788,7 @@ class VacuumAutomation(hass.Hass):
                 and threshold <= confirmed_room_percent <= 100)
 
     def _return_policy(self, running=False) -> dict:
-        """Home, missing data and the stop buffer always block; dwell only releases outside it."""
+        """Missing data blocks starts, but does not alone stop a running job."""
         people = self._presence_summary()
         buffer = self._current_return_buffer_min()
         margin = self._current_start_margin_min()
@@ -803,15 +803,15 @@ class VacuumAutomation(hass.Hass):
             p["travel_time_min"] is not None for p in stop_people) else None
         staying = any(p.get("stationary", False) for p in people)
         now = self.datetime()
+        data_reason = "Standort unbekannt" if not people or any(p["presence"]=="unknown" for p in people) else (
+            "Heimwegzeit unbekannt oder veraltet" if eta is None else None)
         reason = None
-        if not people or any(p["presence"] == "unknown" for p in people):
-            reason = "Standort unbekannt"
-        elif any(p["presence"] == "home" for p in people):
+        # Missing location only blocks new starts. Confirmed safety conditions
+        # remain effective, including another resident's fresh return position.
+        if any(p["presence"] == "home" for p in people):
             reason = "Person zuhause"
         elif any(p.get("near_home_unconfirmed") for p in people):
             reason = "Puffergrenze erreicht"
-        elif eta is None:
-            reason = "Heimwegzeit unbekannt oder veraltet"
         elif not self._current_start_hour() <= now.hour < self._current_end_hour():
             reason = "Außerhalb der Reinigungszeit"
         elif now.weekday() not in self._current_active_weekdays():
@@ -820,12 +820,18 @@ class VacuumAutomation(hass.Hass):
             reason = "Reisemodus"
         elif (now.replace(hour=self._current_end_hour(), minute=0, second=0, microsecond=0) - now).total_seconds() / 60 <= buffer:
             reason = "Reinigungszeit endet"
-        elif eta <= buffer:
+        elif any(p["presence"] != "unknown" and p["travel_time_min"] is not None and p["travel_time_min"] <= buffer for p in people):
             reason = "Puffergrenze erreicht"
+        elif data_reason and not running:
+            reason = data_reason
         elif not running and min(timed_eta if timed_eta is not None else float("inf"), (now.replace(hour=self._current_end_hour(), minute=0, second=0, microsecond=0) - now).total_seconds() / 60) < buffer + margin:
             reason = "Startabstand noch nicht erreicht"
-        return {"allowed": reason is None, "reason": reason or ("Aufenthalt erkannt · Rückkehr wird überwacht" if staying else "Reinigung fortsetzen" if running else "Startgrenze erreicht"),
-                "stationary_release": staying and reason is None,
+        continuing_without_location = running and data_reason is not None and reason is None
+        return {"allowed": reason is None, "reason": reason or (
+                    "Standort fehlt · Reinigung läuft weiter" if continuing_without_location else
+                    "Aufenthalt erkannt · Rückkehr wird überwacht" if staying else "Reinigung fortsetzen" if running else "Startgrenze erreicht"),
+                "location_missing": data_reason is not None,
+                "stationary_release": staying and reason is None and data_reason is None,
                 "all_stationary": bool(people) and all(p.get("stationary", False) for p in people), "timed_eta_min": timed_eta,
                 "stop_eta_min": stop_eta, "eta_min": eta, "buffer_min": buffer, "start_margin_min": margin,
                 "start_at_min": buffer + margin, "stop_at_min": buffer}
@@ -1216,9 +1222,17 @@ class VacuumAutomation(hass.Hass):
             self._motion_observations = {}
         observations = self._motion_observations
         unknown = {"stationary": False, "monitored_absence": False, "motion": "unknown", "stay_minutes": 0}
-        if presence != "away" or distance_km is None or travel_time_min is None:
-            observations.pop(entity_id, None)
+        def pause():
+            previous=observations.get(entity_id)
+            if previous is not None:
+                previous["paused"]=True
+                return {**unknown,"stay_minutes":int((previous["last"]-previous["since"])/60),"stay_paused":True}
+            return {**unknown,"stay_paused":False}
+        if presence == "home":
+            observations.pop(entity_id,None)
             return unknown
+        if presence != "away" or distance_km is None or travel_time_min is None:
+            return pause()
         try:
             person = self.get_state(entity_id, attribute="all") or {}
             attrs = person.get("attributes", {})
@@ -1236,16 +1250,17 @@ class VacuumAutomation(hass.Hass):
             if not all(math.isfinite(v) for v in (accuracy, lat, lon, timestamp, distance_km)) or not 0 <= accuracy <= 50 or not -60 <= now - timestamp <= 600:
                 raise ValueError("GPS inaccurate or stale")
         except (ValueError, TypeError, KeyError):
-            observations.pop(entity_id, None)
-            return unknown
+            return pause()
         if travel_time_min <= self._current_return_buffer_min():
             observations.pop(entity_id, None)
             return {**unknown, "motion": "observing"}
         previous = observations.get(entity_id)
-        # A restart, a data gap or an out-of-order report requires new evidence.
-        if previous is None or timestamp < previous["last"] or timestamp - previous["last"] > 600:
+        # Keep observed dwell across gaps, but never count the missing interval.
+        if previous is not None and (timestamp < previous["last"] or (previous.get("paused") and timestamp == previous["last"])):
+            return pause()
+        if previous is None:
             previous = {"lat": lat, "lon": lon, "distance": distance_km,
-                        "since": timestamp, "last": timestamp, "approaching": False, "stationary": False, "monitored_absence": False}
+                        "since": timestamp, "last": timestamp, "approaching": False, "stationary": False, "monitored_absence": False, "paused": False}
             observations[entity_id] = previous
         elif timestamp > previous["last"]:
             displacement = self._haversine_km(previous["lat"], previous["lon"], lat, lon) * 1000
@@ -1255,13 +1270,17 @@ class VacuumAutomation(hass.Hass):
                 previous.update(lat=lat, lon=lon, distance=distance_km, since=timestamp,
                                 stationary=False, approaching=towards_home or (
                                     previous["approaching"] and not away_from_home))
-            elif timestamp - previous["since"] >= 600:
-                previous.update(stationary=True, approaching=False, monitored_absence=True)
+            else:
+                if previous.get("paused") or timestamp-previous["last"]>600:
+                    previous["since"]+=timestamp-previous["last"]
+                if timestamp-previous["since"]>=600:
+                    previous.update(stationary=True,approaching=False,monitored_absence=True)
             previous["last"] = timestamp
+            previous["paused"] = False
         return {"stationary": previous["stationary"],
                 "monitored_absence": previous["monitored_absence"],
                 "motion": "staying" if previous["stationary"] else "approaching" if previous["approaching"] else "observing",
-                "stay_minutes": int((previous["last"] - previous["since"]) / 60)}
+                "stay_minutes": int((previous["last"] - previous["since"]) / 60),"stay_paused":False}
 
     def _person_presence_summary(self, entity_id: str) -> dict:
         state = self._presence_state(entity_id)
@@ -3029,6 +3048,14 @@ class VacuumAutomation(hass.Hass):
             self._publish_dashboard_state("manuell_aktiv")
             return
         policy = self._return_policy(running=True)
+        missing=policy.get("location_missing",False)
+        if missing and policy["allowed"] and not getattr(self,"_location_gap_active",False):
+            self._location_gap_number=getattr(self,"_location_gap_number",0)+1
+            self._audit_event("location_gap",gap_number=self._location_gap_number,
+                              reason="Reinigung läuft ohne frischen Standort weiter")
+        elif not missing and getattr(self,"_location_gap_active",False):
+            self._audit_event("location_restored",gap_number=getattr(self,"_location_gap_number",0))
+        self._location_gap_active=missing
         self._publish_dashboard_state("aktiv")
         if not policy["allowed"]:
             self._abort_cleaning(policy["reason"])

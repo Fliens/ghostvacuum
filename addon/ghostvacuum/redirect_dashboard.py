@@ -853,6 +853,7 @@ ROBOT_SIGNAL_SUFFIXES = {
     "dust_bag_drying_status": "sensor.{base}_dust_bag_drying_status",
     "drainage_status": "sensor.{base}_drainage_status",
     "drying_left": "sensor.{base}_drying_left",
+    "dust_bag_drying_left": "sensor.{base}_dust_bag_drying_left",
 }
 
 
@@ -2138,7 +2139,8 @@ def render_job_events():
             'rest':'Entfernen aus Planung angefordert','waiting':'Wartet','start_requested':'Start angefordert','start_confirmed':'Start bestätigt',
             'start_failed':'Start fehlgeschlagen','device_state':'Gerätestatus','abort_requested':'Abbruch angefordert',
             'aborted':'Abgebrochen','completed':'Abgeschlossen','tracking_blocked':'Auftragsverfolgung blockiert','planning_applied':'Planung übernommen',
-            'planning_failed':'Planung fehlgeschlagen','service_started':'Dienst gestartet'}
+            'planning_failed':'Planung fehlgeschlagen','service_started':'Dienst gestartet','location_gap':'Standort fehlt · Reinigung läuft weiter',
+            'location_restored':'Standort wieder verfügbar'}
     descriptions={'cleaning':'Reinigt','washing':'Mopwäsche','returning':'Rückkehr','docked':'Angedockt',
                   'drying':'Mop trocknet','dashboard':'Über Dashboard','command_failed':'Gerätebefehl fehlgeschlagen',
                   'robot_stale':'Gerätedaten veraltet','battery_low_or_unknown':'Akku zu niedrig oder unbekannt',
@@ -2881,7 +2883,7 @@ def build_live_dashboard_view(summary):
     for flag, device_value, display in [('washing', 'washing', 'washing'),
             ('returning_to_wash', 'returning_to_wash', 'returning_to_wash'),
             ('returning', 'returning', 'returning'), ('drying', 'drying', 'drying')]:
-        if dashboard_flag(attrs.get(flag)) or device_state == device_value:
+        if dashboard_flag(attrs.get(flag)) or (device_state == device_value and not (flag == 'drying' and attrs.get('drying') is False)):
             display_state = display
             break
     preparing_owned_room = (bool(active_room_label(summary))
@@ -2990,6 +2992,23 @@ def build_live_dashboard_view(summary):
         subtitle = 'Reinigung abgeschlossen'
         if display_state == 'cleaning':
             title = 'Reinigung abgeschlossen'
+    drying = []
+    for key, label, active in (
+        ('drying_left', 'Mops', dashboard_flag(attrs.get('drying')) or display_state == 'drying'),
+        ('dust_bag_drying_left', 'Staubbeutel', dashboard_flag(attrs.get('dust_bag_drying')) or normalized_signal_state(signals.get('dust_bag_drying_status')) == 'drying'),
+    ):
+        minutes = number_value(state_value(signals.get(key), ''))
+        if minutes is None:
+            seconds = number_value(attrs.get(key))
+            minutes = seconds / 60 if seconds is not None else None
+        fresh = diagnostics.get('phase') not in {'stale', 'error'}
+        drying.append({'kind': 'mops' if key == 'drying_left' else 'bag', 'label': label,
+                       'active': bool(active and fresh),
+                       'minutes': math.ceil(minutes) if active and fresh and minutes is not None and math.isfinite(minutes) and minutes > 0 else None,
+                       'state': 'Daten fehlen' if not fresh else 'Trocknet' if active else 'Inaktiv'})
+    if display_state == 'drying':
+        title = 'Angedockt'
+        subtitle = 'An der Station'
     mode = attrs.get('cleaning_mode') if cleaning else None
     mode = {'Sweeping': 'Saugen', 'Mopping': 'Wischen', 'Sweeping and mopping': 'Saugen & Wischen', 'Mopping after sweeping': 'Wischen nach Saugen'}.get(mode, '')
     if cleaning and dashboard_flag(attrs.get('cleangenius_cleaning')):
@@ -3003,7 +3022,7 @@ def build_live_dashboard_view(summary):
     name_parts = robot_name.split()
     if len(name_parts) == 2 and name_parts[0] == name_parts[1]:
         robot_name = name_parts[0]
-    return {'cleaning_permission': cleaning_permission, 'rest_manual_order': any(r.get('order_changed') for r in rooms), 'manual_order': any(r.get('order_changed') or r.get('suspended_today') or (r['group']=='planned' and r.get('plan_override')) for r in rooms if r['group']!='active'), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'title': title, 'subtitle': subtitle, 'cleaning_mode': mode or None, 'progress_scope': progress_scope, 'progress_label': progress_label, 'room_progress': diagnostics.get('room_progress_percent'), 'origin_label': 'Manuell gestartet' if cleaning and dashboard_flag(status.get('active_room_manual')) else 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': 'Bestätigung ausstehend' if pending_confirmation and not confirmed_home else f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Unterwegs' if near_home_unconfirmed else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'schedule_notice': schedule_notice, 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
+    return {'cleaning_permission': cleaning_permission, 'rest_manual_order': any(r.get('order_changed') for r in rooms), 'manual_order': any(r.get('order_changed') or r.get('suspended_today') or (r['group']=='planned' and r.get('plan_override')) for r in rooms if r['group']!='active'), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'drying': drying, 'title': title, 'subtitle': subtitle, 'cleaning_mode': mode or None, 'progress_scope': progress_scope, 'progress_label': progress_label, 'room_progress': diagnostics.get('room_progress_percent'), 'origin_label': 'Manuell gestartet' if cleaning and dashboard_flag(status.get('active_room_manual')) else 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': 'Bestätigung ausstehend' if pending_confirmation and not confirmed_home else f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Unterwegs' if near_home_unconfirmed else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'schedule_notice': schedule_notice, 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
 
 
 def render_live_observation_dashboard(summary):
