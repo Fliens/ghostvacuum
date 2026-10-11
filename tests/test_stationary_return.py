@@ -47,6 +47,22 @@ class StationaryMotion(unittest.TestCase):
         self.assertFalse(self.report(11)['stationary'])
         self.assertFalse(self.report(12,lat=52.007,distance=.7)['stationary'])
 
+    def test_movement_away_keeps_monitoring_but_approach_latches_through_jitter(self):
+        self.report(0); self.assertTrue(self.report(10)['stationary'])
+        away = self.report(11, lat=52.007, distance=.7)
+        self.assertFalse(away['stationary'])
+        self.assertTrue(away['monitored_absence'])
+        self.assertEqual(away['motion'], 'observing')
+        approach = self.report(12, lat=52.006, distance=.6)
+        self.assertEqual(approach['motion'], 'approaching')
+        self.assertEqual(self.report(13, lat=52.0061, distance=.61)['motion'], 'approaching')
+        self.assertEqual(self.report(14, lat=52.008, distance=.8)['motion'], 'observing')
+
+    def test_moving_without_previous_dwell_does_not_gain_permission(self):
+        self.report(0)
+        self.assertFalse(self.report(1, lat=52.007, distance=.7)['monitored_absence'])
+
+
 class StationaryPolicy(unittest.TestCase):
     setUp = ReturnPolicy.setUp
     def test_cafe_release_and_all_other_safety_gates(self):
@@ -94,3 +110,23 @@ class StationaryPolicy(unittest.TestCase):
         self.a._monitor_active_job({});self.a._abort_cleaning.assert_called_once_with('Puffergrenze erreicht')
         self.a._abort_cleaning.reset_mock();self.a.active_room=None
         self.a._monitor_active_job({});self.a._abort_cleaning.assert_not_called()
+
+    def test_ongoing_dwell_job_only_stops_on_approach_inside_buffer(self):
+        self.people=[{'presence':'away','travel_time_min':1,'stationary':False,
+                      'monitored_absence':True,'motion':'observing'}]
+        self.assertTrue(self.a._return_policy(True)['allowed'])
+        self.assertFalse(self.a._return_policy(False)['allowed'])
+        self.people[0]['motion']='approaching'
+        self.assertFalse(self.a._return_policy(True)['allowed'])
+        self.people[0]['travel_time_min']=6
+        self.assertTrue(self.a._return_policy(True)['allowed'])
+        self.people[0].update(travel_time_min=1,motion='unknown',monitored_absence=False)
+        self.assertFalse(self.a._return_policy(True)['allowed'])
+
+    def test_other_person_still_stops_ongoing_monitored_job(self):
+        self.people=[{'presence':'away','travel_time_min':1,'stationary':False,
+                      'monitored_absence':True,'motion':'observing'},
+                     {'presence':'away','travel_time_min':4}]
+        self.assertFalse(self.a._return_policy(True)['allowed'])
+        self.people[1]['presence']='home'
+        self.assertEqual(self.a._return_policy(True)['reason'],'Person zuhause')

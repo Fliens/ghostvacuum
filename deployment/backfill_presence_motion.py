@@ -57,7 +57,7 @@ def replay_motion(app, histories, people, home, buffer_min, margin_min, speed_km
         if new_allowed and not old_allowed:stats['extra_release_reports']+=1
         if previously_allowed and usable and any(r['motion']=='approaching' and r['eta']<=buffer_min for r in results):stats['approach_stops']+=1
         # Running jobs keep permission down to the stop boundary.
-        previously_allowed=usable and all(r['stationary'] or r['eta']>buffer_min for r in results)
+        previously_allowed=usable and all(r['stationary'] or (r.get('monitored_absence') and r['motion']=='observing') or r['eta']>buffer_min for r in results)
     return {**stats,'requested_since':since.isoformat(),'until':until.isoformat(),
             'first_report':datetime.fromtimestamp(min(dates),timezone.utc).isoformat() if dates else None,
             'last_report':datetime.fromtimestamp(max(dates),timezone.utc).isoformat() if dates else None,

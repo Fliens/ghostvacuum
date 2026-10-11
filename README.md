@@ -401,8 +401,11 @@ Die Rückkehrlogik kann einen Aufenthalt nach mindestens 10 Minuten innerhalb ei
 75-m-Bereichs freigeben. Dazu müssen unterschiedliche GPS-Meldungen mit höchstens
 50 m Ungenauigkeit vorliegen, ohne Lücke über 10 Minuten. Wiederholte Abfragen
 desselben Standorts zählen nicht als Aufenthalt. Eine Annäherung um mindestens
-75 m hebt die Freigabe auf. Innerhalb des Rückkehrpuffers wird ein eigener Auftrag
-beendet. Ein Neustart braucht den normalen Startabstand oder einen neu bestätigten
+75 m aktiviert die Rückkehrprüfung. Erst innerhalb des Rückkehrpuffers wird ein
+eigener Auftrag beendet. Bewegung weg von zuhause oder seitlich hebt einen zuvor
+bestätigten Aufenthalt für einen laufenden Auftrag nicht auf. Eine erkennbare
+Umkehr weg von zuhause um mindestens 75 m löst die Annäherungsmarkierung wieder.
+Neue Aufträge benötigen weiterhin den Startabstand oder einen bestätigten Aufenthalt. Ein Neustart braucht den normalen Startabstand oder einen neu bestätigten
 10-minütigen Aufenthalt. Zuhause, fehlende Daten, Reise- und Zeitregeln haben Vorrang.
 Nach einem Neustart wird ein Aufenthalt erneut erkannt. Externe Aufträge werden
 weiterhin nicht automatisch beendet.

@@ -9,6 +9,7 @@ import html
 import re
 import threading
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -2442,6 +2443,30 @@ def room_due_badge(next_due, now=None):
     return {"label": label, "level": level}
 
 
+def dashboard_schedule_notice(summary, now=None):
+    """Show schedule blockers independently of presence and master-switch state."""
+    settings = summary.get('states', {}).get('global', {})
+    window = summary.get('status', {}).get('time_window', {})
+    if not any(key in settings for key in ('active_weekdays', 'start_hour', 'end_hour')) and not window:
+        return None
+    now = now or datetime.now(ZoneInfo('Europe/Berlin'))
+    keys = [key for key, _ in WEEKDAY_OPTIONS]
+    days = active_weekday_keys(summary)
+    days = {keys[int(day)] if day.isdigit() and 0 <= int(day) < 7 else day for day in days}
+    if keys[now.weekday()] not in days:
+        return ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'][now.weekday()] + ' · Automatik pausiert'
+    start = number_value(state_value(settings.get('start_hour'), ''), window.get('start_hour', 8))
+    end = number_value(state_value(settings.get('end_hour'), ''), window.get('end_hour', 22))
+    # Same-day schedule, matching the automation's current start/end rules.
+    if start is None or end is None:
+        return None
+    if not start <= now.hour < end:
+        return 'Außerhalb der Reinigungszeit'
+    if (now.replace(hour=int(end), minute=0, second=0, microsecond=0) - now).total_seconds() / 60 <= first_number(state_value(settings.get('return_buffer'), ''), 5):
+        return 'Reinigungszeit endet'
+    return None
+
+
 def build_live_dashboard_view(summary):
     """Read-only, coordinate-free projection. Missing data is never sample data."""
     import math
@@ -2482,6 +2507,7 @@ def build_live_dashboard_view(summary):
     raw_window = window
     if window is not None and buffer is not None:
         window = max(0, window - buffer)
+    schedule_notice = dashboard_schedule_notice(summary)
     caption, reason = 'Reinigung möglich für', 'Heimweg geschätzt · Puffer berücksichtigt'
     if home or dashboard_flag(status.get('anyone_home')):
         window, caption, reason = 0, 'Keine Reinigung', 'Person zuhause'
@@ -2489,6 +2515,8 @@ def build_live_dashboard_view(summary):
         window, caption, reason = 0, 'Reinigung pausiert', 'Reisemodus aktiv'
     elif unknown or not dashboard_flag(status.get('everyone_away')) or window is None:
         window, caption, reason = None, 'Keine Freigabe', 'Anwesenheit oder Heimweg unbekannt'
+    elif schedule_notice:
+        window, caption, reason = 0, 'Keine automatische Reinigung', schedule_notice
     elif observing:
         reason = 'Zeitfenster geschätzt · Beobachtung, kein Start'
     elif dashboard_flag(status.get('return_policy', {}).get('stationary_release')):
@@ -2557,7 +2585,7 @@ def build_live_dashboard_view(summary):
     name_parts = robot_name.split()
     if len(name_parts) == 2 and name_parts[0] == name_parts[1]:
         robot_name = name_parts[0]
-    return {'manual_order': bool(parse_dashboard_room_order(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'title': title, 'subtitle': subtitle, 'origin_label': 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
+    return {'manual_order': bool(parse_dashboard_room_order(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'title': title, 'subtitle': subtitle, 'origin_label': 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'schedule_notice': schedule_notice, 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
 
 
 def render_live_observation_dashboard(summary):
@@ -3205,7 +3233,7 @@ def render_settings_analysis(summary: dict) -> str:
       <strong class="analysis-decision">{escape(a.get('decision', 'Daten werden geladen'))}</strong>
       <p>{escape(a.get('detail', 'Die Auswertung beginnt mit der nächsten Standortmeldung.'))}</p>
       <div class="analysis-metrics"><div><strong>{escape(policy.get('start_at_min', '—'))} min</strong><span>Start ab</span></div><div><strong>{escape(policy.get('stop_at_min', '—'))} min</strong><span>Reinigung stoppen bei</span></div><div><strong>{escape(policy.get('eta_min') if policy.get('eta_min') is not None else '—')} min</strong><span>Zeit bis zuhause</span></div></div>
-      <p class="analysis-note">Aufenthalt: mindestens 10 min innerhalb von 75 m mit frischen GPS-Meldungen. Annäherung hebt die Freigabe auf. Bei Datenlücken gilt wieder die Zeitgrenze.</p>
+      <p class="analysis-note">Aufenthalt: mindestens 10 min innerhalb von 75 m mit frischen GPS-Meldungen. Laufende Reinigung stoppt bei Annäherung innerhalb des Puffers. Bewegung weg von zuhause stoppt sie nicht. Bei Datenlücken gilt wieder die Zeitgrenze.</p>
     </section>
     {historical_section}
     <section class="section"><div class="section-header"><h2>Puffer vergleichen</h2></div>

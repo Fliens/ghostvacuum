@@ -21,6 +21,10 @@ class MotionHistory(unittest.TestCase):
         self.assertEqual(result['extra_release_reports'],1)
         self.assertEqual(result['approach_stops'],1)
         self.assertNotIn('latitude',str(result))
+    def test_leaving_dwell_away_then_returning_keeps_approach_stop_history(self):
+        result=self.run_history([0,5,10,11,12],[52.0045,52.0045,52.0045,52.0065,52.0055])
+        self.assertEqual(result['approach_stops'],1)
+
     def test_missing_reports_do_not_turn_into_dwell(self):
         result=self.run_history([0,11],[52.0045,52.0045])
         self.assertEqual(result['gaps'],1)

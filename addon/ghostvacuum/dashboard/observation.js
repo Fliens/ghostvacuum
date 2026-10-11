@@ -26,6 +26,9 @@
     const enabled = model.automation_enabled;
     document.querySelector('.observation-label').textContent = locked ? 'Beobachtung · Automatik AUS · Gerätebefehle gesperrt' : `Automatik ${enabled ? 'AN' : 'AUS'} · Live-Betrieb`;
     $('plan-caption').textContent = locked ? 'Beobachtung · kein automatischer Reinigungsplan' : model.manual_order ? 'Manuelle Reihenfolge' : 'Automatisch nach Gewichtung & Fälligkeit';
+    $('schedule-notice').textContent = model.schedule_notice || '';
+    $('schedule-notice').hidden = !model.schedule_notice;
+    $('schedule-notice').title = 'Automatische Reinigungsstarts sind aktuell gesperrt.';
     $('reset-order').hidden = !model.manual_order || locked;
     $('board-hint').textContent = locked ? 'Gerätebefehle und Änderungen gesperrt.' : enabled ? 'Raum starten oder laufende Reinigung abbrechen.' : 'Automatik in den Einstellungen einschalten.';
     $('mode-footer').textContent = locked ? 'Beobachtungsbetrieb · Live-Daten · keine Gerätebefehle' : 'Live-Betrieb · Gerätebefehle freigegeben';

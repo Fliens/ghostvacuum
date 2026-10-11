@@ -595,8 +595,13 @@ class VacuumAutomation(hass.Hass):
         margin = self._current_start_margin_min()
         eta = min((p["travel_time_min"] for p in people), default=None) if people and all(
             p["travel_time_min"] is not None for p in people) else None
-        timed_people = [p for p in people if not p.get("stationary", False)]
+        timed_people = [p for p in people if not p.get("stationary", False) and not (
+            running and p.get("monitored_absence", False) and p.get("motion") == "observing")]
         timed_eta = min((p["travel_time_min"] for p in timed_people), default=None) if all(p["travel_time_min"] is not None for p in timed_people) else None
+        stop_people = [p for p in people if not p.get("stationary", False) and not (
+            p.get("monitored_absence", False) and p.get("motion") == "observing")]
+        stop_eta = min((p["travel_time_min"] for p in stop_people), default=None) if all(
+            p["travel_time_min"] is not None for p in stop_people) else None
         staying = any(p.get("stationary", False) for p in people)
         now = self.datetime()
         reason = None
@@ -620,8 +625,8 @@ class VacuumAutomation(hass.Hass):
             reason = "Startabstand noch nicht erreicht"
         return {"allowed": reason is None, "reason": reason or ("Aufenthalt erkannt · Rückkehr wird überwacht" if staying else "Reinigung fortsetzen" if running else "Startgrenze erreicht"),
                 "stationary_release": staying and reason is None,
-                "all_stationary": bool(people) and not timed_people, "timed_eta_min": timed_eta,
-                "eta_min": eta, "buffer_min": buffer, "start_margin_min": margin,
+                "all_stationary": bool(people) and all(p.get("stationary", False) for p in people), "timed_eta_min": timed_eta,
+                "stop_eta_min": stop_eta, "eta_min": eta, "buffer_min": buffer, "start_margin_min": margin,
                 "start_at_min": buffer + margin, "stop_at_min": buffer}
 
     def _load_return_analysis(self):
@@ -659,7 +664,7 @@ class VacuumAutomation(hass.Hass):
             samples = [r for r in samples if r["t"] >= now - 14 * 86400]
             samples.append({"t": now, "eta": policy["timed_eta_min"] if policy["timed_eta_min"] is not None else policy["eta_min"], "eligible": eligible,
                             "reason": detail, "buffer": policy["buffer_min"], "margin": policy["start_margin_min"],
-                            "stationary": policy["all_stationary"]})
+                            "stationary": policy["all_stationary"], "stop_eta": policy["stop_eta_min"]})
             self._return_samples = samples[-20160:]
             self._analysis_last_minute = minute
             try:
@@ -671,9 +676,11 @@ class VacuumAutomation(hass.Hass):
             except OSError as error:
                 self.log(f"Analyse konnte nicht gespeichert werden: {error}", level="WARNING")
         valid = [r for r in samples if r.get("eligible") and isinstance(r.get("eta"), (int, float))]
-        below = sum(not r.get("stationary", False) and r["eta"] <= policy["buffer_min"] for r in valid)
+        below = sum(not r.get("stationary", False) and isinstance(r.get("stop_eta", r["eta"]), (int, float))
+                    and r.get("stop_eta", r["eta"]) <= policy["buffer_min"] for r in valid)
         simulations = [{"buffer_min": b, "start_samples": sum(r.get("stationary", False) or r["eta"] >= b + policy["start_margin_min"] for r in valid),
-                        "stop_samples": sum(not r.get("stationary", False) and r["eta"] <= b for r in valid)}
+                        "stop_samples": sum(not r.get("stationary", False) and isinstance(r.get("stop_eta", r["eta"]), (int, float))
+                                            and r.get("stop_eta", r["eta"]) <= b for r in valid)}
                        for b in sorted({5, 10, 15, 20, 30, policy["buffer_min"]})]
         reasons = {key: sum(r.get("reason") == key for r in samples) for key in sorted({r.get("reason", "Unbekannt") for r in samples})}
         runs = getattr(self, "history_entries", [])
@@ -990,7 +997,7 @@ class VacuumAutomation(hass.Hass):
         if not hasattr(self, "_motion_observations"):
             self._motion_observations = {}
         observations = self._motion_observations
-        unknown = {"stationary": False, "motion": "unknown", "stay_minutes": 0}
+        unknown = {"stationary": False, "monitored_absence": False, "motion": "unknown", "stay_minutes": 0}
         if presence != "away" or distance_km is None:
             observations.pop(entity_id, None)
             return unknown
@@ -1017,18 +1024,21 @@ class VacuumAutomation(hass.Hass):
         # A restart, a data gap or an out-of-order report requires new evidence.
         if previous is None or timestamp < previous["last"] or timestamp - previous["last"] > 600:
             previous = {"lat": lat, "lon": lon, "distance": distance_km,
-                        "since": timestamp, "last": timestamp, "approaching": False, "stationary": False}
+                        "since": timestamp, "last": timestamp, "approaching": False, "stationary": False, "monitored_absence": False}
             observations[entity_id] = previous
         elif timestamp > previous["last"]:
             displacement = self._haversine_km(previous["lat"], previous["lon"], lat, lon) * 1000
             towards_home = (previous["distance"] - distance_km) * 1000 >= 75
+            away_from_home = (distance_km - previous["distance"]) * 1000 >= 75
             if displacement > 75 or towards_home:
                 previous.update(lat=lat, lon=lon, distance=distance_km, since=timestamp,
-                                stationary=False, approaching=previous["approaching"] or towards_home)
+                                stationary=False, approaching=towards_home or (
+                                    previous["approaching"] and not away_from_home))
             elif timestamp - previous["since"] >= 600:
-                previous.update(stationary=True, approaching=False)
+                previous.update(stationary=True, approaching=False, monitored_absence=True)
             previous["last"] = timestamp
         return {"stationary": previous["stationary"],
+                "monitored_absence": previous["monitored_absence"],
                 "motion": "staying" if previous["stationary"] else "approaching" if previous["approaching"] else "observing",
                 "stay_minutes": int((previous["last"] - previous["since"]) / 60)}
 
