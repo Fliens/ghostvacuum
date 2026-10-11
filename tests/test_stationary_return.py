@@ -7,20 +7,34 @@ class StationaryMotion(unittest.TestCase):
     def setUp(self):
         self.app=module.VacuumAutomation()
         self.now=datetime(2026,10,10,12,tzinfo=timezone.utc)
-        self.app.datetime=lambda:self.now
+        self.app.datetime=lambda aware=False:self.now
         self.position={'state':'not_home','last_reported':self.now.isoformat(),'attributes':{'source_type':'gps','latitude':52.005,'longitude':13,'gps_accuracy':10}}
         self.app.get_state=lambda *args,**kw:self.position
+        self.app._current_return_buffer_min=lambda:5
 
-    def report(self,minutes,lat=52.005,distance=.5,accuracy=10,presence='away'):
+    def report(self,minutes,lat=52.005,distance=.5,accuracy=10,presence='away',eta=7):
         self.now=datetime(2026,10,10,12,tzinfo=timezone.utc)+timedelta(minutes=minutes)
         self.position.update(last_reported=self.now.isoformat())
         self.position['attributes'].update(latitude=lat,gps_accuracy=accuracy)
-        return self.app._person_motion('person.a',presence,distance)
+        return self.app._person_motion('person.a',presence,distance,eta)
+
+    def test_buffer_does_not_collect_dwell_and_reentry_starts_fresh(self):
+        self.report(0)
+        self.assertTrue(self.report(10)['stationary'])
+        for minute in (11, 21, 31):
+            result=self.report(minute,eta=5)
+            self.assertFalse(result['stationary'])
+            self.assertFalse(result['monitored_absence'])
+            self.assertEqual(result['stay_minutes'],0)
+            self.assertNotIn('person.a',self.app._motion_observations)
+        self.assertEqual(self.report(32,eta=7)['stay_minutes'],0)
+        self.assertFalse(self.report(35,eta=7)['stationary'])
+        self.assertTrue(self.report(42,eta=7)['stationary'])
 
     def test_dwell_requires_fresh_distinct_reports_and_tolerates_jitter(self):
         self.assertFalse(self.report(0)['stationary'])
         self.now+=timedelta(minutes=10)
-        self.assertFalse(self.app._person_motion('person.a','away',.5)['stationary'])
+        self.assertFalse(self.app._person_motion('person.a','away',.5,7)['stationary'])
         self.assertTrue(self.report(10,lat=52.0051,distance=.51)['stationary'])
 
     def test_approach_stops_release_and_requires_new_dwell(self):
@@ -35,7 +49,7 @@ class StationaryMotion(unittest.TestCase):
         for failure in ['stale','poor','home','restart']:
             self.app._motion_observations={};self.report(0);self.report(10)
             if failure=='stale':
-                self.now+=timedelta(minutes=11);result=self.app._person_motion('person.a','away',.5)
+                self.now+=timedelta(minutes=11);result=self.app._person_motion('person.a','away',.5,7)
             elif failure=='poor':result=self.report(11,accuracy=100)
             elif failure=='home':result=self.report(11,presence='home')
             else:
@@ -63,13 +77,20 @@ class StationaryMotion(unittest.TestCase):
         self.assertFalse(self.report(1, lat=52.007, distance=.7)['monitored_absence'])
 
 
+    def test_appdaemon_local_clock_accepts_fresh_reports(self):
+        from zoneinfo import ZoneInfo
+        self.app.datetime = lambda aware=False: self.now.astimezone(ZoneInfo('Europe/Berlin')) if aware else self.now.astimezone(ZoneInfo('Europe/Berlin')).replace(tzinfo=None)
+        self.report(0)
+        self.assertTrue(self.report(10)['stationary'])
+
+
 class StationaryPolicy(unittest.TestCase):
     setUp = ReturnPolicy.setUp
     def test_cafe_release_and_all_other_safety_gates(self):
-        self.people=[{'presence':'away','travel_time_min':1,'stationary':True}]
+        self.people=[{'presence':'away','travel_time_min':7,'stationary':True}]
         self.assertTrue(self.a._return_policy()['allowed'])
         self.assertTrue(self.a._return_policy(True)['allowed'])
-        self.people[0]['stationary']=False
+        self.people[0].update(stationary=False,travel_time_min=5)
         self.assertFalse(self.a._return_policy(True)['allowed'])
         self.people[0].update(stationary=True,presence='home')
         self.assertEqual(self.a._return_policy(True)['reason'],'Person zuhause')
@@ -79,11 +100,11 @@ class StationaryPolicy(unittest.TestCase):
         self.a.travel_mode_active=True
         self.assertFalse(self.a._return_policy()['allowed'])
         self.a.travel_mode_active=False
-        self.a.datetime=lambda:datetime(2026,10,10,21,56,tzinfo=timezone.utc)
+        self.a.datetime=lambda aware=False:datetime(2026,10,10,21,56,tzinfo=timezone.utc)
         self.assertFalse(self.a._return_policy(True)['allowed'])
 
     def test_other_resident_near_home_always_blocks(self):
-        self.people=[{'presence':'away','travel_time_min':1,'stationary':True}, {'presence':'away','travel_time_min':4}]
+        self.people=[{'presence':'away','travel_time_min':7,'stationary':True}, {'presence':'away','travel_time_min':4}]
         self.assertFalse(self.a._return_policy(True)['allowed'])
         self.people[1]['travel_time_min']=7
         self.assertFalse(self.a._return_policy()['allowed'])
@@ -92,7 +113,7 @@ class StationaryPolicy(unittest.TestCase):
         self.assertTrue(self.a._return_policy()['allowed'])
 
     def test_available_window_releases_only_proven_dwell(self):
-        self.people=[{'presence':'away','travel_time_min':1,'stationary':True}]
+        self.people=[{'presence':'away','travel_time_min':7,'stationary':True}]
         self.assertEqual(self.a._calculate_available_time_minutes(False),600)
         self.people.append({'presence':'away','travel_time_min':15})
         self.assertEqual(self.a._calculate_available_time_minutes(False),15)
@@ -104,17 +125,17 @@ class StationaryPolicy(unittest.TestCase):
         self.a.args['observation_mode']=False
         self.a._observe_active_job=Mock();self.a._publish_dashboard_state=Mock();self.a._abort_cleaning=Mock()
         self.a._vacuum_job_problem=None;self.a.active_room='office'
-        self.people=[{'presence':'away','travel_time_min':1,'stationary':True}]
+        self.people=[{'presence':'away','travel_time_min':7,'stationary':True}]
         self.a._monitor_active_job({});self.a._abort_cleaning.assert_not_called()
-        self.people[0]['stationary']=False
+        self.people[0].update(stationary=False,travel_time_min=5)
         self.a._monitor_active_job({});self.a._abort_cleaning.assert_called_once_with('Puffergrenze erreicht')
         self.a._abort_cleaning.reset_mock();self.a.active_room=None
         self.a._monitor_active_job({});self.a._abort_cleaning.assert_not_called()
 
-    def test_ongoing_dwell_job_only_stops_on_approach_inside_buffer(self):
+    def test_ongoing_dwell_job_always_blocks_inside_buffer(self):
         self.people=[{'presence':'away','travel_time_min':1,'stationary':False,
                       'monitored_absence':True,'motion':'observing'}]
-        self.assertTrue(self.a._return_policy(True)['allowed'])
+        self.assertFalse(self.a._return_policy(True)['allowed'])
         self.assertFalse(self.a._return_policy(False)['allowed'])
         self.people[0]['motion']='approaching'
         self.assertFalse(self.a._return_policy(True)['allowed'])
@@ -130,3 +151,22 @@ class StationaryPolicy(unittest.TestCase):
         self.assertFalse(self.a._return_policy(True)['allowed'])
         self.people[1]['presence']='home'
         self.assertEqual(self.a._return_policy(True)['reason'],'Person zuhause')
+
+    def test_confirmed_dwell_cannot_release_buffer_or_available_window(self):
+        for eta in (0, 1, 4.99, 5):
+            self.people=[{'presence':'away','travel_time_min':eta,'stationary':True,
+                          'monitored_absence':True,'motion':'staying'}]
+            for running in (False, True):
+                policy=self.a._return_policy(running)
+                self.assertFalse(policy['allowed'])
+                self.assertFalse(policy['stationary_release'])
+                self.assertEqual(policy['reason'],'Puffergrenze erreicht')
+            self.assertEqual(self.a._calculate_available_time_minutes(False),0)
+        self.people[0]['travel_time_min']=5.01
+        self.assertTrue(self.a._return_policy()['allowed'])
+
+    def test_analysis_never_counts_stationary_sample_inside_buffer_as_start(self):
+        self.people=[{'presence':'away','travel_time_min':3,'stationary':True}]
+        report=self.a._return_analysis()
+        self.assertEqual(report['below_buffer_samples'],1)
+        self.assertEqual(next(s for s in report['simulations'] if s['buffer_min']==5)['start_samples'],0)

@@ -989,7 +989,9 @@ def available_presence_entities(configured: List[str], options: dict = None) -> 
 
     seen = set()
     people: List[dict] = []
-    for state in all_states():
+    observed = all_states()
+    by_id = {row.get("entity_id"): row for row in observed}
+    for state in observed:
         entity_id = str(state.get("entity_id") or "")
 
         # Only include person entities, or sensor entities if explicitly configured
@@ -1026,6 +1028,7 @@ def available_presence_entities(configured: List[str], options: dict = None) -> 
                 "state": str(state.get("state") or "unknown"),
                 "source": source,
                 "has_device": has_device,
+                "presence_source": state_attrs(by_id.get(device_source, {})).get("source_type"),
                 "device_trackers": attrs.get("device_trackers", []),
             }
         )
@@ -2467,6 +2470,63 @@ def dashboard_schedule_notice(summary, now=None):
     return None
 
 
+def person_journey_scale(person, view, buffer, policy, status, now=None):
+    """Six display stations, derived from existing presence signals only."""
+    import math
+    eta = person_travel_time(person)
+    eta = eta if eta is not None and math.isfinite(eta) and eta >= 0 else None
+    margin = number_value(policy.get('start_margin_min'), 5)
+    margin = margin if margin is not None and math.isfinite(margin) and margin >= 0 else 5
+    start = buffer + margin if buffer is not None else None
+    radius = number_value(status.get('travel_pause_radius_km'))
+    hours = number_value(status.get('travel_pause_after_hours'))
+    duration = hours if hours is not None and math.isfinite(hours) and hours >= 0 else None
+    steps = [
+        {'label':'Zuhause', 'hint':'WLAN' if view.get('presence_source') == 'wifi' else ''},
+        {'label':'Im Puffer', 'hint':f'≤ {buffer:g} min' if buffer is not None else ''},
+        {'label':'Aufenthalt nötig', 'hint':f'{buffer:g}–{start:g} min' if start is not None else ''},
+        {'label':'Genug Abstand', 'hint':f'≥ {start:g} min' if start is not None else ''},
+        {'label':'Außerhalb Reiseradius', 'hint':f'> {radius:g} km' if radius is not None and math.isfinite(radius) else ''},
+        {'label':'Reisemodus', 'hint':f'nach {duration:g} h' if duration is not None else ''},
+    ]
+    result = {'steps':steps, 'station':None, 'tone':'unknown', 'eta':None,
+              'note':'', 'progress':None, 'approaching':False}
+    if view['kind'] == 'home':
+        result.update(station=0, tone='ready')
+        return result
+    if view['kind'] == 'unknown' or eta is None or person.get('motion') == 'unknown' or buffer is None:
+        result['note'] = 'Abwesenheit wird bestätigt' if view.get('detail') == 'Abwesenheit wird bestätigt' else 'Standortdaten fehlen oder veraltet'
+        return result
+    result.update(eta=f'ca. {round(eta)} min bis zuhause', approaching=person.get('motion') == 'approaching')
+    if dashboard_flag(person.get('travel_mode_active')):
+        result.update(station=5, tone='travel', note='Reisemodus aktiv')
+    elif dashboard_flag(person.get('outside_radius')):
+        result.update(station=4, tone='ready')
+        since = parse_datetime(person.get('outside_since'))
+        if since and duration is not None:
+            clock = now or datetime.now(since.tzinfo)
+            if clock.tzinfo is None and since.tzinfo is not None:
+                clock = clock.replace(tzinfo=since.tzinfo)
+            elapsed = max(0, (clock - since).total_seconds() / 60)
+            remaining = max(0, math.ceil(duration * 60 - elapsed))
+            if duration > 0:
+                result['travel_progress'] = {'minutes':min(elapsed, duration * 60), 'required':duration * 60}
+            result['note'] = f'Reisemodus in {remaining // 60} h {remaining % 60:02d} min' if remaining else 'Reisemodus wird geprüft'
+        else:
+            result['note'] = 'Reise-Timer wird erfasst'
+    elif person.get('near_home_unconfirmed') or eta <= buffer:
+        result.update(station=1, tone='waiting')
+    elif start is not None and eta < start:
+        result.update(station=2, tone='ready' if person.get('stationary') else 'waiting')
+        if person.get('stationary'):
+            result.update(note='Aufenthalt bestätigt', progress={'minutes':10,'required':10})
+        elif view.get('stay_progress'):
+            result['progress'] = view['stay_progress']
+    else:
+        result.update(station=3, tone='ready')
+    return result
+
+
 def build_live_dashboard_view(summary):
     """Read-only, coordinate-free projection. Missing data is never sample data."""
     import math
@@ -2477,19 +2537,35 @@ def build_live_dashboard_view(summary):
     diagnostics = status.get('robot_diagnostics') or {}
     observing = dashboard_flag(status.get('observation_mode'))
     people = []
+    native_people = {p.get('entity_id'): p for p in summary.get('available_presence_entities', [])}
+    person_sources = {key: p.get('presence_source') for key, p in native_people.items()}
+    pending_confirmation = False
+    near_home_unconfirmed = False
+    confirmed_home = False
     home = False
     unknown = not bool(status.get('presence_summary'))
     after_hours = number_value(status.get('travel_pause_after_hours'))
     for person in status.get('presence_summary') or []:
         is_home = person_is_home(person)
         is_unknown = person.get('presence') == 'unknown' or str(person.get('state', '')).lower() in {'', 'unknown', 'unavailable'}
+        native = native_people.get(person.get('entity_id'), {})
+        native_state = str(native.get('state', '')).lower()
+        near_home = dashboard_flag(person.get('near_home_unconfirmed'))
+        near_home_unconfirmed = near_home_unconfirmed or near_home
+        pending = (is_home or is_unknown) and native.get('presence_source') == 'gps' and native_state not in {'', 'unknown', 'unavailable', 'home', 'on'}
+        pending_confirmation = pending_confirmation or pending
+        confirmed_home = confirmed_home or (is_home and not pending)
         home = home or is_home
         unknown = unknown or is_unknown
         travelling = dashboard_flag(person.get('travel_mode_active')) and not is_home and not is_unknown
         eta = person_travel_time(person)
         if eta is not None and (not math.isfinite(eta) or eta < 0):
             eta = None
-        text = 'Zuhause' if is_home else 'Reisemodus' if travelling else 'Heimweg unbekannt' if is_unknown or eta is None else f'≈ {round(eta)} min bis zuhause'
+        text = 'Zuhause' if is_home else 'Reisemodus' if travelling else 'Heimweg unbekannt' if is_unknown or eta is None else f'ca. {round(eta)} min bis zuhause'
+        if pending:
+            text = 'Abwesenheit wird bestätigt'
+        if near_home:
+            text = f'Im Puffer · {round(eta)} min bis zuhause' if eta is not None else 'Im Puffer'
         countdown = None
         since = parse_datetime(person.get('outside_since'))
         if not is_home and not is_unknown and not travelling and dashboard_flag(person.get('outside_radius')) and since and after_hours is not None:
@@ -2497,8 +2573,17 @@ def build_live_dashboard_view(summary):
             remaining = max(0, math.ceil(after_hours * 60 - (now - since).total_seconds() / 60))
             countdown = f'Reisemodus in {remaining // 60} h {remaining % 60:02d} min' if remaining else 'Reisemodus wird geprüft'
         if not is_home and not is_unknown and not travelling and countdown is None:
-            countdown = 'Aufenthalt erkannt' if person.get('stationary') else 'Annäherung erkannt' if person.get('motion') == 'approaching' else None
-        people.append({'name': person_name(person), 'kind': 'home' if is_home else 'unknown' if is_unknown else 'travel' if travelling else 'away', 'detail': text, 'countdown': countdown})
+            if person.get('stationary'):
+                countdown = 'Aufenthalt zählt'
+            elif person.get('motion') == 'approaching':
+                countdown = 'Annäherung erkannt'
+            elif person.get('motion') == 'observing':
+                observed_minutes = number_value(person.get('stay_minutes'), 0) or 0
+                remaining = max(0, math.ceil(10 - observed_minutes))
+                countdown = f'Aufenthalt · noch {remaining} min' if remaining else 'Wartet auf Standortmeldung'
+            elif person.get('motion') == 'unknown':
+                countdown = 'Wartet auf Standortmeldung'
+        people.append({'name': person_name(person), 'presence_source': {'router':'wifi','gps':'mobile'}.get(person.get('presence_source') or person_sources.get(person.get('entity_id'))), 'kind': 'away' if near_home else 'unknown' if pending else 'home' if is_home else 'unknown' if is_unknown else 'travel' if travelling else 'away', 'detail': text, 'countdown': countdown})
     travel = dashboard_flag(status.get('travel_mode_active'))
     buffer = number_value(state_value(summary.get("states", {}).get("global", {}).get("return_buffer"), ""), status.get("return_buffer_min"))
     buffer = max(0, round(buffer)) if buffer is not None and math.isfinite(buffer) else None
@@ -2508,9 +2593,16 @@ def build_live_dashboard_view(summary):
     if window is not None and buffer is not None:
         window = max(0, window - buffer)
     schedule_notice = dashboard_schedule_notice(summary)
+    policy = status.get('return_policy', {})
+    nearest_eta = first_number(policy.get('timed_eta_min'), policy.get('eta_min'))
+    within_buffer = nearest_eta is not None and buffer is not None and nearest_eta <= buffer and not dashboard_flag(policy.get('allowed'))
     caption, reason = 'Reinigung möglich für', 'Heimweg geschätzt · Puffer berücksichtigt'
-    if home or dashboard_flag(status.get('anyone_home')):
+    if pending_confirmation and not confirmed_home:
+        window, caption, reason = 0, 'Keine Freigabe', 'Abwesenheit wird bestätigt'
+    elif home or dashboard_flag(status.get('anyone_home')):
         window, caption, reason = 0, 'Keine Reinigung', 'Person zuhause'
+    elif near_home_unconfirmed:
+        window, caption, reason = 0, 'Kein automatischer Start', 'Innerhalb des Puffers'
     elif travel:
         window, caption, reason = 0, 'Reinigung pausiert', 'Reisemodus aktiv'
     elif unknown or not dashboard_flag(status.get('everyone_away')) or window is None:
@@ -2521,11 +2613,62 @@ def build_live_dashboard_view(summary):
         reason = 'Zeitfenster geschätzt · Beobachtung, kein Start'
     elif dashboard_flag(status.get('return_policy', {}).get('stationary_release')):
         caption, reason = 'Maximale Reinigungszeit', 'Aufenthalt erkannt · Stopp bei Annäherung im Puffer'
+    elif within_buffer:
+        window, caption, reason = 0, 'Kein automatischer Start', 'Innerhalb des Puffers'
+    # Each person gets one status, selected by the strongest applicable condition.
+    for person_view, person in zip(people, status.get('presence_summary', [])):
+        person_view['stay_progress'] = None
+        if person_view['kind'] in {'home', 'unknown', 'travel'} or dashboard_flag(person.get('near_home_unconfirmed')):
+            person_view['countdown'] = None
+            continue
+        eta = person_travel_time(person)
+        valid_eta = eta is not None and math.isfinite(eta) and eta >= 0
+        continued = bool(status.get('active_room')) and person.get('monitored_absence') and person.get('motion') == 'observing'
+        if valid_eta and buffer is not None and eta <= buffer and not person.get('stationary') and not continued:
+            person_view['detail'] = f'Im Puffer · {round(eta)} min bis zuhause'
+            person_view['countdown'] = None
+        elif person.get('motion') == 'unknown':
+            person_view['detail'], person_view['countdown'] = 'Wartet auf Standortmeldung', None
+        elif valid_eta and buffer is not None and eta < buffer + (number_value(policy.get('start_margin_min'), 5) or 5) and not person.get('stationary') and not status.get('active_room'):
+            if person.get('motion') == 'observing':
+                observed = number_value(person.get('stay_minutes'), 0) or 0
+                observed = max(0, min(10, observed)) if math.isfinite(observed) else 0
+                person_view['stay_progress'] = {'minutes': math.floor(observed), 'required': 10}
+            person_view['countdown'] = None
+        else:
+            # Return ETA is sufficient when no personal condition blocks a start.
+            person_view['countdown'] = None
+    for person_view, person in zip(people, status.get('presence_summary', [])):
+        person_view['journey'] = person_journey_scale(person, person_view, buffer, policy, status)
     calculation = f'Puffer {buffer} min' if buffer is not None else 'Puffer unbekannt'
     if window is not None and window > 0 and raw_window is not None and buffer is not None:
         calculation = f'Zeitfenster {round(raw_window)} min − Puffer {buffer} min = {round(window)} min'
         if dashboard_flag(status.get('return_policy', {}).get('stationary_release')):
             calculation = f'Höchstens bis zum Zeitfensterende · Puffer {buffer} min'
+    if within_buffer and not home and not unknown and not pending_confirmation and not travel and not schedule_notice and not observing:
+        calculation = f'{round(nearest_eta)} min bis zuhause · Puffer {buffer} min'
+    # The dashboard shows permission, not an estimated amount of cleaning time.
+    permission_ready = False
+    permission_title = 'Kein automatischer Start'
+    permission_reason = reason
+    automation_enabled = bool_on(summary.get('states', {}).get('global', {}).get('enabled'))
+    if observing:
+        permission_title, permission_reason = 'Beobachtungsmodus', 'Gerätebefehle gesperrt'
+    elif not automation_enabled:
+        permission_title, permission_reason = 'Automatik deaktiviert', 'Keine automatischen Starts'
+    elif not (pending_confirmation or home or near_home_unconfirmed or unknown or travel or schedule_notice):
+        permission_ready = dashboard_flag(policy.get('allowed'))
+        if permission_ready:
+            permission_title = 'Reinigung freigegeben'
+            permission_reason = 'Aufenthalt bestätigt' if dashboard_flag(policy.get('stationary_release')) else 'Ausreichend Abstand'
+        else:
+            permission_reason = policy.get('reason') or 'Freigabe wird geprüft'
+            if permission_reason == 'Startabstand noch nicht erreicht':
+                permission_title = 'Automatik wartet'
+                permission_reason = 'Freigabe nach 10 Minuten Aufenthalt' if any(p.get('stay_progress') is not None for p in people) else 'Noch zu nah zuhause'
+            if permission_reason == 'Puffergrenze erreicht':
+                permission_reason = 'Innerhalb des Puffers'
+    cleaning_permission = {'ready': permission_ready, 'title': permission_title, 'reason': permission_reason}
     raw_state = state_value(vacuum, 'unknown')
     cleaning = raw_state in {'cleaning', 'paused'}
     catalog = summary.get('room_segments') or []
@@ -2585,7 +2728,7 @@ def build_live_dashboard_view(summary):
     name_parts = robot_name.split()
     if len(name_parts) == 2 and name_parts[0] == name_parts[1]:
         robot_name = name_parts[0]
-    return {'manual_order': bool(parse_dashboard_room_order(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'title': title, 'subtitle': subtitle, 'origin_label': 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'schedule_notice': schedule_notice, 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
+    return {'cleaning_permission': cleaning_permission, 'manual_order': bool(parse_dashboard_room_order(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'title': title, 'subtitle': subtitle, 'origin_label': 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': 'Bestätigung ausstehend' if pending_confirmation and not confirmed_home else f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Unterwegs' if near_home_unconfirmed else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'schedule_notice': schedule_notice, 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
 
 
 def render_live_observation_dashboard(summary):

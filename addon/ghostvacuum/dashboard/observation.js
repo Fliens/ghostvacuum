@@ -10,12 +10,24 @@
     travel:'<path d="M12 2v19M12 7 3 13v3l9-3 9 3v-3l-9-6M12 17l-4 4v1l4-1 4 1v-1l-4-4"/>',
     unknown:'<circle cx="12" cy="12" r="9"/><path d="M9 9a3 3 0 0 1 6 0c0 2-3 2-3 5M12 17h.01"/>'
   };
+  const sourcePaths = {wifi:'<path d="M2 8.5a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0M8.5 15.5a5.5 5.5 0 0 1 7 0"/><circle cx="12" cy="19" r="1"/>',mobile:'<path d="M4 20v-3M9 20v-7M14 20V9M19 20V4"/>'};
+  const sourceLabels = {wifi:'Anwesenheit über WLAN',mobile:'Standort vom Handy (GPS)'};
   const labels = {home:'Zuhause',away:'Unterwegs',travel:'Auf Reisen',unknown:'Status unbekannt'};
   const dateLabel = value => {
     if (!value) return 'Nicht verfügbar';
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? 'Nicht verfügbar' : date.toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Berlin'});
   };
+  function journeyMarkup(p) {
+    const j = p.journey;
+    if (!j) return '';
+    const progress = j.progress || j.travel_progress;
+    const active = j.steps[j.station];
+    const dwellPercent = progress && progress.required > 0 ? Math.max(0, Math.min(100, progress.minutes / progress.required * 100)) : null;
+    const dwellConfirmed = j.progress && progress.minutes >= progress.required;
+    const detail = j.travel_progress ? j.note : dwellConfirmed || (progress && progress.minutes<=0) ? '' : progress ? `${progress.minutes} / ${progress.required} min` : j.note;
+    return `<div class="presence-scale ${esc(j.tone)}" aria-label="Aufenthaltsstatus von ${esc(p.name)}"><ol class="scale-stations">${j.steps.map((step,index)=>`<li class="scale-segment ${j.station!==null&&index<=j.station?'filled':''} ${j.station===index?'active':''} ${index===2&&j.station===2&&(!j.progress||j.progress.minutes<=0)?'awaiting-dwell':''} ${j.station===index&&dwellPercent!==null?'dwell-segment':''}" ${j.station===index?'aria-current="step"':''} ${j.station===index&&dwellPercent!==null?`style="--dwell:${dwellPercent}%"`:''} title="${esc(step.label)}${step.hint?' · '+esc(step.hint):''}"><span class="sr-only">${esc(step.label)}</span>${j.station===index&&dwellPercent!==null?`<span class="segment-progress" role="progressbar" aria-label="${j.travel_progress?'Zeit bis Reisemodus':'Aufenthalt'} von ${esc(p.name)}" aria-valuemin="0" aria-valuemax="${esc(progress.required)}" aria-valuenow="${esc(progress.minutes)}"></span>`:''}</li>`).join('')}</ol><div class="scale-detail ${progress?'has-dwell':''}"><span class="scale-current">${esc(j.approaching && (j.station===2 || j.station===3) ? 'Auf dem Heimweg' : dwellConfirmed ? 'Aufenthalt bestätigt' : active?.label || 'Standort unbekannt')}</span>${detail?`<span class="scale-note">${esc(detail)}</span>`:''}</div></div>`;
+  }
   let currentModel = null;
   let draggedRoom = null;
   function render(model) {
@@ -52,13 +64,13 @@
     const water = metric('Festwasseranschluss');
     const stationInfo = [water ? 'Festwasser' : null, mop ? 'Mop '+mop.value : null].filter(Boolean).join(' · ') || 'Status nicht verfügbar';
     $('device').innerHTML = `<div><b>${esc(robot.battery)}</b><span>Akku</span></div><div><b>Station ${esc(base?.value || 'unbekannt')}</b><span>${esc(stationInfo)}</span></div><div><b>${esc(dust?.label || 'Staubbehälter')}</b><span>${esc(dust?.value || 'Füllstand unbekannt')}</span></div>`;
-    $('budget').textContent = numeric(model.window) ? Math.round(model.window) : '—';
-    $('budget-caption').textContent = model.caption;
-    $('budget-title').textContent = model.reason;
-    $('budget-calculation').textContent = model.calculation;
+    const permission = model.cleaning_permission;
+    $('permission-title').textContent = permission.title;
+    $('permission-reason').textContent = permission.reason;
+    $('permission-indicator').textContent = permission.ready ? '✓' : 'Ⅱ';
+    document.querySelector('.cleaning-permission').classList.toggle('blocked', !permission.ready);
     $('presence-summary').textContent = model.presence_summary;
-    document.querySelector('.cleaning-budget').classList.toggle('blocked', !(model.window > 0));
-    $('people').innerHTML = model.people.map(p => `<div class="person"><span class="person-icon ${esc(p.kind)}" role="img" aria-label="${esc(labels[p.kind])}"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[p.kind] || paths.unknown}</svg></span><b>${esc(p.name)}</b><div class="person-return"><span>${esc(p.detail)}</span>${p.countdown ? `<small class="travel-countdown">◷ ${esc(p.countdown)}</small>` : ''}</div></div>`).join('') || '<span class="locked-note">Keine verlässlichen Personendaten</span>';
+    $('people').innerHTML = model.people.map(p => `<div class="person-panel"><div class="person"><span class="person-icon ${esc(p.kind)}" role="img" aria-label="${esc(labels[p.kind])}"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[p.kind] || paths.unknown}</svg></span><b>${esc(p.name)}</b>${sourcePaths[p.presence_source] ? `<span class="presence-source" role="img" aria-label="${esc(sourceLabels[p.presence_source])}" title="${esc(sourceLabels[p.presence_source])}"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${sourcePaths[p.presence_source]}</svg></span>` : ''}<div class="person-return"><span>${esc(p.journey?.eta || '')}</span></div></div>${journeyMarkup(p)}</div>`).join('') || '<span class="locked-note">Keine verlässlichen Personendaten</span>';
     const groups = [['active','Jetzt in Reinigung',locked ? 'Gerätestatus · Befehle gesperrt' : ''],['planned','Heute geplant',locked ? 'Im Beobachtungsbetrieb kein Plan' : 'Gewichtung & Fälligkeit'],['rest','Aktuell nicht geplant','Letzte Reinigung & nächste Fälligkeit']];
     $('room-board').innerHTML = groups.map(([group,title,hint]) => {
       const rooms = model.rooms.filter(r => r.group === group);

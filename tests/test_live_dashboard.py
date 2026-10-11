@@ -23,6 +23,157 @@ class LiveDashboard(unittest.TestCase):
                               {'room_key': 'room_2', 'segment_id': 2, 'name': 'Küche'}],
         }
 
+    def test_near_home_with_wifi_uses_buffer_instead_of_wifi_waiting(self):
+        summary = self.summary()
+        summary['status'].update(anyone_home=False, everyone_away=True,observation_mode=False,return_policy={'allowed':False,'reason':'Puffergrenze erreicht','eta_min':1})
+        summary['states']['global']={'enabled':{'state':'on'},'return_buffer':{'state':'5'}}
+        summary['status']['presence_summary'][0].update(state='not_home', presence='away', near_home_unconfirmed=True, travel_time_min=1)
+        view = dashboard.build_live_dashboard_view(summary)
+        self.assertEqual(view['people'][0]['detail'], 'Im Puffer · 1 min bis zuhause')
+        self.assertEqual(view['people'][0]['kind'], 'away')
+        self.assertEqual(view['presence_summary'], 'Unterwegs')
+        self.assertIsNone(view['people'][0]['stay_progress'])
+        self.assertIsNone(view['people'][0]['countdown'])
+        self.assertEqual(view['reason'], 'Innerhalb des Puffers')
+        self.assertEqual(view['cleaning_permission']['reason'],'Innerhalb des Puffers')
+        self.assertFalse(view['cleaning_permission']['ready'])
+        self.assertEqual(view['window'], 0)
+
+    def test_permission_follows_actual_start_policy_instead_of_positive_time_window(self):
+        summary = self.summary()
+        summary['status'].update(observation_mode=False, return_policy={'allowed':False, 'reason':'Startabstand noch nicht erreicht'})
+        summary['states']['global'] = {'enabled':{'state':'on'}, 'return_buffer':{'state':'5'}}
+        summary['states']['sensors']['return_window']['state'] = '7'
+        view = dashboard.build_live_dashboard_view(summary)
+        self.assertGreater(view['window'], 0)
+        self.assertFalse(view['cleaning_permission']['ready'])
+        self.assertEqual(view['cleaning_permission']['title'],'Automatik wartet')
+        self.assertEqual(view['cleaning_permission']['reason'],'Noch zu nah zuhause')
+        summary['status']['return_policy'].update(allowed=True,stationary_release=True)
+        permission = dashboard.build_live_dashboard_view(summary)['cleaning_permission']
+        self.assertTrue(permission['ready'])
+        self.assertEqual(permission['reason'],'Aufenthalt bestätigt')
+        summary['states']['global']['enabled']['state'] = 'off'
+        permission = dashboard.build_live_dashboard_view(summary)['cleaning_permission']
+        self.assertFalse(permission['ready'])
+        self.assertEqual(permission['title'],'Automatik deaktiviert')
+
+    def test_dwell_progress_only_when_outside_buffer_and_waiting_for_dwell(self):
+        summary = self.summary()
+        summary['status'].update(observation_mode=False,return_policy={'allowed':False,'reason':'Startabstand noch nicht erreicht','start_margin_min':5})
+        summary['states']['global'] = {'enabled':{'state':'on'},'return_buffer':{'state':'5'}}
+        person = summary['status']['presence_summary'][0]
+        person.update(travel_time_min=7,motion='observing',stay_minutes=3)
+        view = dashboard.build_live_dashboard_view(summary)
+        self.assertEqual(view['cleaning_permission']['title'],'Automatik wartet')
+        self.assertEqual(view['cleaning_permission']['reason'],'Freigabe nach 10 Minuten Aufenthalt')
+        self.assertEqual(view['people'][0]['stay_progress'],{'minutes':3,'required':10})
+        person['travel_time_min'] = 5
+        self.assertIsNone(dashboard.build_live_dashboard_view(summary)['people'][0]['stay_progress'])
+        person['travel_time_min'] = 25
+        self.assertIsNone(dashboard.build_live_dashboard_view(summary)['people'][0]['stay_progress'])
+        person.update(travel_time_min=7,motion='unknown')
+        self.assertIsNone(dashboard.build_live_dashboard_view(summary)['people'][0]['stay_progress'])
+
+    def test_journey_stations_and_missing_location(self):
+        base = {'presence':'away','state':'not_home','travel_time_min':7,'motion':'observing'}
+        view = {'kind':'away','stay_progress':{'minutes':3,'required':10}}
+        policy = {'start_margin_min':5}
+        status = {'travel_pause_radius_km':100,'travel_pause_after_hours':24}
+        for changes, station, tone in [
+            ({'travel_time_min':3},1,'waiting'),
+            ({},2,'waiting'),
+            ({'stationary':True},2,'ready'),
+            ({'travel_time_min':25},3,'ready'),
+            ({'outside_radius':True},4,'ready'),
+            ({'travel_mode_active':True,'outside_radius':True},5,'travel'),
+            ({'motion':'unknown'},None,'unknown'),
+            ({'travel_time_min':None},None,'unknown')]:
+            with self.subTest(changes=changes):
+                journey = dashboard.person_journey_scale({**base,**changes},view,5,policy,status)
+                self.assertEqual(journey['station'],station)
+                self.assertEqual(journey['tone'],tone)
+                self.assertEqual(len(journey['steps']),6)
+                if station!=2:
+                    self.assertIsNone(journey['progress'])
+                if station is None:
+                    self.assertIsNone(journey['eta'])
+                    self.assertFalse(journey['approaching'])
+        home = dashboard.person_journey_scale({'motion':'unknown'},{'kind':'home','presence_source':'wifi'},5,policy,status)
+        self.assertEqual(home['station'],0)
+        self.assertEqual(home['steps'][0]['hint'],'WLAN')
+        returning = dashboard.person_journey_scale({**base,'motion':'approaching'},{'kind':'away'},5,policy,status)
+        self.assertTrue(returning['approaching'])
+        self.assertIsNone(returning['progress'])
+
+    def test_radius_station_has_individual_travel_countdown(self):
+        now = datetime(2026,10,11,12,tzinfo=timezone.utc)
+        person = {'travel_time_min':180,'outside_radius':True,'outside_since':(now-timedelta(hours=2)).isoformat()}
+        journey = dashboard.person_journey_scale(person,{'kind':'away'},5,{'start_margin_min':5},{'travel_pause_after_hours':24},now=now)
+        self.assertEqual(journey['station'],4)
+        self.assertEqual(journey['note'],'Reisemodus in 22 h 00 min')
+        self.assertEqual(journey['travel_progress'], {'minutes':120, 'required':1440})
+
+    def test_each_person_shows_only_the_strongest_status(self):
+        summary = self.summary()
+        summary['status']['observation_mode'] = False
+        summary['states']['global'] = {'return_buffer':{'state':'5'}}
+        summary['status']['return_policy'] = {'allowed':False,'eta_min':1,'timed_eta_min':1,'start_margin_min':5}
+        p = summary['status']['presence_summary'][0]
+        p.update(motion='observing',stay_minutes=3,travel_time_min=1)
+        view = dashboard.build_live_dashboard_view(summary)['people'][0]
+        self.assertEqual(view['detail'],'Im Puffer · 1 min bis zuhause')
+        self.assertIsNone(view['stay_progress'])
+        self.assertIsNone(view['countdown'])
+        p['travel_time_min'] = 7
+        view = dashboard.build_live_dashboard_view(summary)['people'][0]
+        self.assertEqual(view['detail'],'ca. 7 min bis zuhause')
+        self.assertEqual(view['stay_progress'],{'minutes':3,'required':10})
+        self.assertIsNone(view['countdown'])
+        p['travel_time_min'] = 20
+        self.assertEqual(dashboard.build_live_dashboard_view(summary)['people'][0]['detail'],'ca. 20 min bis zuhause')
+        p.update(state='home')
+        view = dashboard.build_live_dashboard_view(summary)['people'][0]
+        self.assertEqual(view['detail'],'Zuhause')
+        self.assertIsNone(view['stay_progress'])
+        self.assertIsNone(view['countdown'])
+
+    def test_short_homeway_explains_buffer_and_unconfirmed_cafe_stay(self):
+        summary = self.summary()
+        summary['status'].update(observation_mode=False, return_policy={'allowed':False, 'eta_min':1, 'timed_eta_min':1})
+        summary['states']['global'] = {'return_buffer':{'state':'5'}}
+        model = dashboard.build_live_dashboard_view(summary)
+        self.assertEqual(model['caption'], 'Kein automatischer Start')
+        self.assertEqual('Innerhalb des Puffers', model['reason'])
+        self.assertEqual(model['calculation'], '1 min bis zuhause · Puffer 5 min')
+        self.assertEqual(model['window'], 0)
+        summary['status']['presence_summary'][0].update(motion='observing',stay_minutes=3)
+        self.assertIsNone(dashboard.build_live_dashboard_view(summary)['people'][0]['countdown'])
+        summary['status']['return_policy'].update(allowed=True, stationary_release=True, timed_eta_min=None)
+        summary['status']['presence_summary'][0].update(stationary=True,motion='staying')
+        self.assertEqual(dashboard.build_live_dashboard_view(summary)['caption'], 'Maximale Reinigungszeit')
+        summary['status']['return_policy'].update(allowed=False,stationary_release=False,timed_eta_min=1)
+        summary['status']['presence_summary'][0].update(stationary=False,motion='approaching')
+        self.assertEqual(dashboard.build_live_dashboard_view(summary)['reason'], 'Innerhalb des Puffers')
+
+    def test_pending_departure_does_not_claim_person_is_home(self):
+        summary = self.summary()
+        summary['available_presence_entities'] = [{'entity_id':'person.simon', 'presence_source':'gps', 'state':'not_home'}]
+        for effective in ('home', 'unknown'):
+            summary['status']['presence_summary'][0].update(state=effective, presence=effective)
+            model = dashboard.build_live_dashboard_view(summary)
+            self.assertEqual(model['people'][0]['detail'], 'Abwesenheit wird bestätigt')
+            self.assertEqual(model['people'][0]['kind'], 'unknown')
+            self.assertEqual(model['presence_summary'], 'Bestätigung ausstehend')
+            self.assertEqual(model['reason'], 'Abwesenheit wird bestätigt')
+            self.assertEqual(model['window'], 0)
+
+    def test_presence_source_icon_uses_actual_tracker_type_not_home_state(self):
+        summary = self.summary()
+        for source, icon in [('router', 'wifi'), ('gps', 'mobile'), (None, None)]:
+            summary['available_presence_entities'] = [{'entity_id':'person.simon', 'presence_source':source}]
+            self.assertEqual(dashboard.build_live_dashboard_view(summary)['people'][0]['presence_source'], icon)
+
     def test_buffer_is_subtracted_once_and_disabled_rooms_are_explicit(self):
         summary = self.summary()
         summary['states']['global'] = {'return_buffer': {'state': '5.0'}}
@@ -116,7 +267,7 @@ class LiveDashboard(unittest.TestCase):
         person = summary['status']['presence_summary'][0]
         person.update(outside_since=(datetime.now(timezone.utc) - timedelta(hours=22)).isoformat(), outside_radius=True)
         model = dashboard.build_live_dashboard_view(summary)
-        self.assertIn('Reisemodus in 2 h', model['people'][0]['countdown'])
+        self.assertIsNone(model['people'][0]['countdown'])
         person['travel_mode_active'] = True
         summary['status']['travel_mode_active'] = True
         model = dashboard.build_live_dashboard_view(summary)

@@ -589,7 +589,7 @@ class VacuumAutomation(hass.Hass):
                 and threshold <= confirmed_room_percent <= 100)
 
     def _return_policy(self, running=False) -> dict:
-        """Home and missing data always block; proved dwell can release a short ETA."""
+        """Home, missing data and the stop buffer always block; dwell only releases outside it."""
         people = self._presence_summary()
         buffer = self._current_return_buffer_min()
         margin = self._current_start_margin_min()
@@ -609,6 +609,8 @@ class VacuumAutomation(hass.Hass):
             reason = "Standort unbekannt"
         elif any(p["presence"] == "home" for p in people):
             reason = "Person zuhause"
+        elif any(p.get("near_home_unconfirmed") for p in people):
+            reason = "Puffergrenze erreicht"
         elif eta is None:
             reason = "Heimwegzeit unbekannt oder veraltet"
         elif not self._current_start_hour() <= now.hour < self._current_end_hour():
@@ -619,7 +621,7 @@ class VacuumAutomation(hass.Hass):
             reason = "Reisemodus"
         elif (now.replace(hour=self._current_end_hour(), minute=0, second=0, microsecond=0) - now).total_seconds() / 60 <= buffer:
             reason = "Reinigungszeit endet"
-        elif timed_eta is not None and timed_eta <= buffer:
+        elif eta <= buffer:
             reason = "Puffergrenze erreicht"
         elif not running and min(timed_eta if timed_eta is not None else float("inf"), (now.replace(hour=self._current_end_hour(), minute=0, second=0, microsecond=0) - now).total_seconds() / 60) < buffer + margin:
             reason = "Startabstand noch nicht erreicht"
@@ -636,9 +638,9 @@ class VacuumAutomation(hass.Hass):
         try:
             data = json.loads(path.read_text())
             if isinstance(data, list):
-                cutoff = self.datetime().timestamp() - 14 * 86400
+                cutoff = self.datetime(aware=True).timestamp() - 14 * 86400
                 self._return_samples = [r for r in data if isinstance(r, dict)
-                                        and isinstance(r.get("t"), (int, float)) and cutoff <= r["t"] <= self.datetime().timestamp()][-20160:]
+                                        and isinstance(r.get("t"), (int, float)) and cutoff <= r["t"] <= self.datetime(aware=True).timestamp()][-20160:]
                 if self._return_samples:
                     self._analysis_last_minute = int(self._return_samples[-1]["t"] // 60)
         except (OSError, ValueError, TypeError):
@@ -655,7 +657,7 @@ class VacuumAutomation(hass.Hass):
             "Kein aktiver Raum fällig" if not due else ", ".join(blockers) if blockers else "Fälliger Raum kann beginnen")
         if robot and robot.get("started") is True and not self.active_room:
             decision, detail = "Extern gestartete Reinigung", "Wird von der Automatik nicht beendet"
-        now = self.datetime().timestamp()
+        now = self.datetime(aware=True).timestamp()
         minute = int(now // 60)
         samples = getattr(self, "_return_samples", [])
         # One real observation per minute; gaps are never filled or counted as dwell time.
@@ -664,7 +666,7 @@ class VacuumAutomation(hass.Hass):
             samples = [r for r in samples if r["t"] >= now - 14 * 86400]
             samples.append({"t": now, "eta": policy["timed_eta_min"] if policy["timed_eta_min"] is not None else policy["eta_min"], "eligible": eligible,
                             "reason": detail, "buffer": policy["buffer_min"], "margin": policy["start_margin_min"],
-                            "stationary": policy["all_stationary"], "stop_eta": policy["stop_eta_min"]})
+                            "stationary": policy["all_stationary"], "stop_eta": policy["eta_min"], "nearest_eta": policy["eta_min"]})
             self._return_samples = samples[-20160:]
             self._analysis_last_minute = minute
             try:
@@ -676,11 +678,14 @@ class VacuumAutomation(hass.Hass):
             except OSError as error:
                 self.log(f"Analyse konnte nicht gespeichert werden: {error}", level="WARNING")
         valid = [r for r in samples if r.get("eligible") and isinstance(r.get("eta"), (int, float))]
-        below = sum(not r.get("stationary", False) and isinstance(r.get("stop_eta", r["eta"]), (int, float))
-                    and r.get("stop_eta", r["eta"]) <= policy["buffer_min"] for r in valid)
-        simulations = [{"buffer_min": b, "start_samples": sum(r.get("stationary", False) or r["eta"] >= b + policy["start_margin_min"] for r in valid),
-                        "stop_samples": sum(not r.get("stationary", False) and isinstance(r.get("stop_eta", r["eta"]), (int, float))
-                                            and r.get("stop_eta", r["eta"]) <= b for r in valid)}
+        # Older samples may have excluded stationary people from ETA. Use the
+        # nearest recorded ETA when available and never infer a start inside buffer.
+        below = sum(r.get("nearest_eta", r["eta"]) <= policy["buffer_min"] for r in valid)
+        simulations = [{"buffer_min": b, "start_samples": sum(
+                            r.get("nearest_eta", r["eta"]) > b and (
+                                r.get("stationary", False) or r["eta"] >= b + policy["start_margin_min"])
+                            for r in valid),
+                        "stop_samples": sum(r.get("nearest_eta", r["eta"]) <= b for r in valid)}
                        for b in sorted({5, 10, 15, 20, 30, policy["buffer_min"]})]
         reasons = {key: sum(r.get("reason") == key for r in samples) for key in sorted({r.get("reason", "Unbekannt") for r in samples})}
         runs = getattr(self, "history_entries", [])
@@ -824,7 +829,7 @@ class VacuumAutomation(hass.Hass):
         return self._wifi_presence_state(entity_id, raw)
 
     def _wifi_presence_state(self, entity_id: str, raw: str) -> str:
-        """Router loss is not departure: require a GPS fix obtained after loss/startup."""
+        """WLAN confirms arrival; a fresh outside GPS fix confirms departure."""
         person = self.get_state(entity_id, attribute="all") or {}
         assigned = person.get("attributes", {}).get("device_trackers", [])
         guards = getattr(self, "_wifi_departure_guards", None)
@@ -843,7 +848,8 @@ class VacuumAutomation(hass.Hass):
         if not routers:
             guards.pop(entity_id, None)
             return raw
-        now = self.datetime().timestamp()
+        now = self.datetime(aware=True).timestamp()
+        previous["near_home"] = False
         if routers != previous.get("routers"):
             previous = {"routers": routers, "after": now, "home": previous.get("home", False)}
             guards[entity_id] = previous
@@ -853,6 +859,7 @@ class VacuumAutomation(hass.Hass):
         home = self.get_state(self.home_zone, attribute="all") or {}
         attrs = home.get("attributes", {})
         confirmed = False
+        near_home_distance = None
         for fix in gps:
             try:
                 a = fix["attributes"]
@@ -869,16 +876,28 @@ class VacuumAutomation(hass.Hass):
                     continue
                 if not (0 <= accuracy <= 50 and radius >= 0 and updated > previous["after"] and 0 <= now - updated <= age_limit):
                     continue
-                if str(fix.get("state", "")).lower() in {"unknown", "unavailable", "home", "on", ""}:
+                if str(fix.get("state", "")).lower() in {"unknown", "unavailable", ""}:
                     continue
-                if self._haversine_km(lat, lon, home_lat, home_lon) * 1000 > radius + accuracy:
+                distance = self._haversine_km(lat, lon, home_lat, home_lon)
+                if distance * 1000 <= radius + accuracy:
+                    near_home_distance = distance
+                elif not self._is_home_like_state(str(fix.get("state", ""))):
                     confirmed = True
             except (KeyError, TypeError, ValueError, OverflowError):
                 continue
+        if near_home_distance is not None:
+            # This is not an arrival confirmation or cleaning release. The return
+            # policy keeps this fresh near-home position inside its stop guard.
+            previous["near_home"] = True
+            previous["near_home_distance_km"] = near_home_distance
+            return "not_home"
         if confirmed:
             previous["home"] = False
-            return raw
-        return "home" if previous.get("home") or self._is_home_like_state(raw) else "unknown"
+            return "not_home" if self._is_home_like_state(raw) else raw
+        # A GPS home-zone entry cannot confirm arrival for a WLAN-linked person.
+        if self._is_home_like_state(raw):
+            return "unknown"
+        return "home" if previous.get("home") else "unknown"
 
     def _on_wifi_tracker_change(self, entity, attribute, old, new, kwargs):
         person = kwargs["person"]
@@ -975,7 +994,7 @@ class VacuumAutomation(hass.Hass):
             return None
         try:
             reported = source.get("last_reported") or source.get("last_updated")
-            age = self.datetime().timestamp() - datetime.fromisoformat(reported).timestamp()
+            age = self.datetime(aware=True).timestamp() - datetime.fromisoformat(reported).timestamp()
             if not -60 <= age <= float(self.args.get("position_max_age_min", 60)) * 60:
                 return None
             value = float(source.get("state"))
@@ -992,13 +1011,13 @@ class VacuumAutomation(hass.Hass):
         except (TypeError, ValueError):
             return None
 
-    def _person_motion(self, entity_id, presence, distance_km):
+    def _person_motion(self, entity_id, presence, distance_km, travel_time_min):
         """Dwell is proved by fresh distinct GPS reports, never by repeated polls."""
         if not hasattr(self, "_motion_observations"):
             self._motion_observations = {}
         observations = self._motion_observations
         unknown = {"stationary": False, "monitored_absence": False, "motion": "unknown", "stay_minutes": 0}
-        if presence != "away" or distance_km is None:
+        if presence != "away" or distance_km is None or travel_time_min is None:
             observations.pop(entity_id, None)
             return unknown
         try:
@@ -1014,12 +1033,15 @@ class VacuumAutomation(hass.Hass):
             lat, lon = float(attrs["latitude"]), float(attrs["longitude"])
             reported = source.get("last_reported") or source.get("last_updated")
             timestamp = datetime.fromisoformat(reported).timestamp()
-            now = self.datetime().timestamp()
+            now = self.datetime(aware=True).timestamp()
             if not all(math.isfinite(v) for v in (accuracy, lat, lon, timestamp, distance_km)) or not 0 <= accuracy <= 50 or not -60 <= now - timestamp <= 600:
                 raise ValueError("GPS inaccurate or stale")
         except (ValueError, TypeError, KeyError):
             observations.pop(entity_id, None)
             return unknown
+        if travel_time_min <= self._current_return_buffer_min():
+            observations.pop(entity_id, None)
+            return {**unknown, "motion": "observing"}
         previous = observations.get(entity_id)
         # A restart, a data gap or an out-of-order report requires new evidence.
         if previous is None or timestamp < previous["last"] or timestamp - previous["last"] > 600:
@@ -1057,11 +1079,16 @@ class VacuumAutomation(hass.Hass):
         if mode != "local" and not self._is_home_like_state(state):
             travel_time_min = self._tracking_sensor_minutes(entity_id, mode, speed) if self._person_is_away(entity_id) else None
         presence = "home" if self._is_home_like_state(state) else "away" if self._person_is_away(entity_id) else "unknown"
-        motion = self._person_motion(entity_id, presence, distance_km)
+        motion = self._person_motion(entity_id, presence, distance_km, travel_time_min)
+        wifi_guard = getattr(self, "_wifi_departure_guards", {}).get(entity_id, {})
+        wifi_home = any(self._is_home_like_state(value[0]) for value in wifi_guard.get("routers", {}).values())
+        near_home = bool(wifi_guard.get("near_home")) and not wifi_home
         return {
             "entity_id": entity_id,
             "state": state,
             "presence": presence,
+            "near_home_unconfirmed": near_home,
+            "presence_source": "router" if wifi_home else None,
             **motion,
             "distance_km": round(distance_km, 1) if distance_km is not None else None,
             "travel_time_min": travel_time_min,
@@ -1080,6 +1107,9 @@ class VacuumAutomation(hass.Hass):
         if not self._person_is_away(entity_id):
             return None
 
+        guard = getattr(self, "_wifi_departure_guards", {}).get(entity_id, {})
+        if guard.get("near_home"):
+            return guard["near_home_distance_km"]
         person_state = self.get_state(entity_id, attribute="all")
         home_state = self.get_state(self.home_zone, attribute="all")
         if not isinstance(person_state, dict) or not isinstance(home_state, dict):
@@ -1384,7 +1414,7 @@ class VacuumAutomation(hass.Hass):
         try:
             data = json.loads(self._presence_timer_file.read_text())
             # An unobserved gap cannot prove continuous absence outside the radius.
-            if 0 <= self.datetime().timestamp() - data["observed_at"] <= 180:
+            if 0 <= self.datetime(aware=True).timestamp() - data["observed_at"] <= 180:
                 self.outside_since = {k: datetime.fromisoformat(v)
                                       for k, v in data.get("outside_since", {}).items()}
                 self._presence_timer_signature = data.get("signature")
@@ -1394,7 +1424,7 @@ class VacuumAutomation(hass.Hass):
     def _save_presence_timers(self):
         if not hasattr(self, "_presence_timer_file"):
             return
-        payload = {"observed_at": self.datetime().timestamp(),
+        payload = {"observed_at": self.datetime(aware=True).timestamp(),
                    "signature": self._presence_timer_signature,
                    "outside_since": {k: v.isoformat() for k, v in self.outside_since.items()}}
         try:
@@ -1486,7 +1516,8 @@ class VacuumAutomation(hass.Hass):
         time_until_end = max(0.0, (end_time - now).total_seconds() / 60)
         people = self._presence_summary()
         # A stationary release is monitored permission, not a predicted absence.
-        if not people or any(p["presence"] != "away" or p["travel_time_min"] is None for p in people):
+        if not people or any(p["presence"] != "away" or p["travel_time_min"] is None or
+                             p["travel_time_min"] <= self._current_return_buffer_min() for p in people):
             travel_minutes = 0.0
         else:
             timed = [p["travel_time_min"] for p in people if not p.get("stationary", False)]
@@ -2209,6 +2240,16 @@ class VacuumAutomation(hass.Hass):
             return f"{prefix}Bereit"
         return f"{prefix}Warten"
 
+    def _dashboard_room_catalog(self) -> List[dict]:
+        """Read configuration only, including while observation blocks planning."""
+        return [
+            {"room_key": key, "room": self._room_label(key),
+             "segment_id": config["segment_id"],
+             "enabled": self._room_enabled(key),
+             "interval_h": round(self._room_interval_h(key), 1)}
+            for key, config in self.rooms.items()
+        ]
+
     def _publish_dashboard_state(self, reason: str):
         self._evaluate_travel_mode()
         if self._is_everyone_away():
@@ -2252,6 +2293,9 @@ class VacuumAutomation(hass.Hass):
         weekly_minutes = weekly_stats[0]["minutes"] if weekly_stats else 0
 
         common_attributes = {
+            "published_at": self.datetime().isoformat(),
+            "room_catalog": self._dashboard_room_catalog(),
+            "robot_state_max_age_sec": float(self.args.get("robot_state_max_age_sec", 300)),
             "observation_mode": self._ha_state(observing),
             "anyone_home": self._ha_state(self._is_anyone_home()),
             "everyone_away": self._ha_state(self._is_everyone_away()),

@@ -25,7 +25,7 @@ class PresenceLogic(unittest.TestCase):
         self.app._presence_timer_signature = None
         self.app.log = lambda *a, **k: None
         self.now = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
-        self.app.datetime = lambda: self.now
+        self.app.datetime = lambda aware=False: self.now
         self.states = {
             'zone.home': {'state': '0', 'attributes': {'latitude': 52, 'longitude': 13}},
             'zone.office': {'state': '0', 'attributes': {'friendly_name': 'Büro'}},

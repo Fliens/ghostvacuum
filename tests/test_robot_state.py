@@ -25,7 +25,7 @@ class RobotState(unittest.TestCase):
         self.app.args = {'observation_mode': True}
         self.app.vacuum_entity = 'vacuum.willi'
         self.app.rooms = {'office': {'segment_id': 1}}
-        self.app.datetime = lambda: NOW
+        self.app.datetime = lambda aware=False: NOW
         self.app._vacuum_job_problem = None
         self.states = {
             'vacuum.willi': {'state': 'docked', 'last_reported': NOW.isoformat(), 'attributes': {
@@ -87,11 +87,11 @@ class RobotState(unittest.TestCase):
         self.assertIn('room_not_on_selected_map', self.app._robot_start_blockers(snapshot(), 'office'))
 
     def test_quiet_hours_across_midnight_and_missing_schedule(self):
-        self.app.datetime = lambda: NOW.replace(hour=23)
+        self.app.datetime = lambda aware=False: NOW.replace(hour=23)
         self.assertIn('quiet_hours', self.app._robot_start_blockers(snapshot()))
-        self.app.datetime = lambda: NOW.replace(hour=7)
+        self.app.datetime = lambda aware=False: NOW.replace(hour=7)
         self.assertIn('quiet_hours', self.app._robot_start_blockers(snapshot()))
-        self.app.datetime = lambda: NOW.replace(hour=8)
+        self.app.datetime = lambda aware=False: NOW.replace(hour=8)
         self.assertNotIn('quiet_hours', self.app._robot_start_blockers(snapshot()))
         state = snapshot()
         state['dnd'] = None
@@ -170,7 +170,7 @@ class JobCorrelation(unittest.TestCase):
         app._vacuum_job_problem = None
         app._vacuum_job = self.job
         app.abort_requested = False
-        app.datetime = lambda: NOW.replace(minute=4)
+        app.datetime = lambda aware=False: NOW.replace(minute=4)
         app.last_cleaned = {}
         app.cleaned_during_absence = []
         app._robot_snapshot = lambda: self.data
@@ -206,7 +206,7 @@ class JobCorrelation(unittest.TestCase):
 
     def test_start_notification_waits_for_acceptance_and_is_sent_once(self):
         app = self.make_app()
-        app.datetime = lambda: NOW.replace(second=10)
+        app.datetime = lambda aware=False: NOW.replace(second=10)
         app._send_start_notification = Mock()
         app._observe_active_job()
         app._send_start_notification.assert_not_called()

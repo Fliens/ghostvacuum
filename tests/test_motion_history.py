@@ -15,15 +15,20 @@ class MotionHistory(unittest.TestCase):
         return backfill.replay_motion(module.VacuumAutomation(),[rows],[{'id':'person.a','gps':'device_tracker.phone','routers':[]}],
                                      (52,13),5,5,30,start,start+timedelta(days=1))
     def test_replays_dwell_release_and_approach_without_fake_minutes(self):
-        result=self.run_history([0,5,10,11],[52.0045,52.0045,52.0045,52.0035])
+        result=self.run_history([0,5,10,11],[52.03,52.03,52.03,52.02])
         self.assertEqual(result['gps_reports'],4)
         self.assertEqual(result['dwell_episodes'],1)
         self.assertEqual(result['extra_release_reports'],1)
         self.assertEqual(result['approach_stops'],1)
         self.assertNotIn('latitude',str(result))
     def test_leaving_dwell_away_then_returning_keeps_approach_stop_history(self):
-        result=self.run_history([0,5,10,11,12],[52.0045,52.0045,52.0045,52.0065,52.0055])
+        result=self.run_history([0,5,10,11,12],[52.03,52.03,52.03,52.04,52.02])
         self.assertEqual(result['approach_stops'],1)
+
+    def test_history_inside_buffer_never_collects_dwell(self):
+        result=self.run_history([0,5,10,15],[52.0045]*4)
+        self.assertEqual(result['dwell_episodes'],0)
+        self.assertEqual(result['extra_release_reports'],0)
 
     def test_missing_reports_do_not_turn_into_dwell(self):
         result=self.run_history([0,11],[52.0045,52.0045])
@@ -39,6 +44,6 @@ class MotionHistory(unittest.TestCase):
         model=dashboard.build_live_dashboard_view(summary)
         self.assertEqual(model['caption'],'Maximale Reinigungszeit')
         self.assertIn('Stopp bei Annäherung',model['reason'])
-        self.assertEqual(model['people'][0]['countdown'],'Aufenthalt erkannt')
+        self.assertIsNone(model['people'][0]['countdown'])
         summary['status']['presence_summary'][0]['state']='home'
         self.assertEqual(dashboard.build_live_dashboard_view(summary)['window'],0)

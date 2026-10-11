@@ -66,7 +66,7 @@ class ObservationSafety(unittest.TestCase):
         from datetime import datetime
         from unittest.mock import Mock
         self.app.away_since = None
-        self.app.datetime = lambda: datetime(2026, 10, 10, 17)
+        self.app.datetime = lambda aware=False: datetime(2026, 10, 10, 17)
         self.app._evaluate_travel_mode = Mock()
         self.app._publish_dashboard_state = Mock()
         for name in ('_check_cleaning', '_abort_cleaning', '_send_return_notification', '_save_state'):

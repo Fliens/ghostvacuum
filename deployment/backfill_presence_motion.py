@@ -9,6 +9,7 @@ import urllib.request
 
 
 def replay_motion(app, histories, people, home, buffer_min, margin_min, speed_kmh, since, until):
+    app._current_return_buffer_min=lambda:buffer_min
     latest = {}; previous_motion = {}; previously_allowed = False
     stats = {'gps_reports':0,'usable_reports':0,'dwell_episodes':0,'extra_release_reports':0,'approach_stops':0,'gaps':0,'home_reports':0,'unknown_presence_reports':0,'unusable_gps_reports':0}
     dates=[]; last_gps={}
@@ -27,7 +28,7 @@ def replay_motion(app, histories, people, home, buffer_min, margin_min, speed_km
         if entity in last_gps and timestamp-last_gps[entity]>600:stats['gaps']+=1
         last_gps[entity]=timestamp
         now=datetime.fromtimestamp(timestamp,timezone.utc)
-        app.datetime=lambda:now
+        app.datetime=lambda aware=False:now
         results=[]
         for person in people:
             gps=latest.get(person['gps'],{});attrs=gps.get('attributes',{})
@@ -40,8 +41,8 @@ def replay_motion(app, histories, people, home, buffer_min, margin_min, speed_km
             except (ValueError,TypeError,KeyError): pass
             gps=dict(gps);gps['last_reported']=gps.get('last_updated') or gps.get('last_changed')
             app.get_state=lambda *args,**kw:gps
-            motion=app._person_motion(person['id'],presence,distance)
             eta=math.ceil(distance/speed_kmh*60) if distance is not None else None
+            motion=app._person_motion(person['id'],presence,distance,eta)
             valid=motion['motion']!='unknown' and presence=='away' and eta is not None
             if previous_motion.get(person['id'])!='staying' and motion['motion']=='staying':stats['dwell_episodes']+=1
             previous_motion[person['id']]=motion['motion']
@@ -52,12 +53,12 @@ def replay_motion(app, histories, people, home, buffer_min, margin_min, speed_km
             if any(r['presence']=='home' for r in results):stats['home_reports']+=1
             elif any(r['presence']=='unknown' for r in results):stats['unknown_presence_reports']+=1
             else:stats['unusable_gps_reports']+=1
-        new_allowed=usable and all(r['stationary'] or r['eta']>=buffer_min+margin_min for r in results)
+        new_allowed=usable and all(r['eta']>buffer_min and (r['stationary'] or r['eta']>=buffer_min+margin_min) for r in results)
         old_allowed=usable and all(r['eta']>=buffer_min+margin_min for r in results)
         if new_allowed and not old_allowed:stats['extra_release_reports']+=1
-        if previously_allowed and usable and any(r['motion']=='approaching' and r['eta']<=buffer_min for r in results):stats['approach_stops']+=1
+        if previously_allowed and usable and any(r['eta']<=buffer_min for r in results):stats['approach_stops']+=1
         # Running jobs keep permission down to the stop boundary.
-        previously_allowed=usable and all(r['stationary'] or (r.get('monitored_absence') and r['motion']=='observing') or r['eta']>buffer_min for r in results)
+        previously_allowed=usable and all(r['eta']>buffer_min for r in results)
     return {**stats,'requested_since':since.isoformat(),'until':until.isoformat(),
             'first_report':datetime.fromtimestamp(min(dates),timezone.utc).isoformat() if dates else None,
             'last_report':datetime.fromtimestamp(max(dates),timezone.utc).isoformat() if dates else None,

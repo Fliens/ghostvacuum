@@ -10,7 +10,7 @@ class ReturnPolicy(unittest.TestCase):
         self.a = module.VacuumAutomation()
         a = self.a
         a.args = {'observation_mode': True}
-        a.datetime = lambda: datetime(2026,10,10,12,tzinfo=timezone.utc)
+        a.datetime = lambda aware=False: datetime(2026,10,10,12,tzinfo=timezone.utc)
         a._current_return_buffer_min = lambda: 5
         a._current_start_margin_min = lambda: 5
         a._current_start_hour = lambda: 8
@@ -47,7 +47,7 @@ class ReturnPolicy(unittest.TestCase):
         self.people[-1] = {'presence':'away','travel_time_min':None}
         self.assertFalse(self.a._return_policy()['allowed'])
         self.people.pop()
-        self.a.datetime = lambda: datetime(2026,10,10,21,56,tzinfo=timezone.utc)
+        self.a.datetime = lambda aware=False: datetime(2026,10,10,21,56,tzinfo=timezone.utc)
         self.assertFalse(self.a._return_policy(True)['allowed'])
         self.a.args['active_weekdays_entity'] = 'input_text.days'
         self.a.get_state = lambda e: '0,1'
@@ -72,7 +72,7 @@ class ReturnPolicy(unittest.TestCase):
         self.assertEqual(counts[20],0)
         self.assertEqual(counts[10],1)
         self.assertEqual(self.a._return_analysis()['samples'],1)
-        self.a.datetime = lambda: datetime(2026,10,10,14,tzinfo=timezone.utc)
+        self.a.datetime = lambda aware=False: datetime(2026,10,10,14,tzinfo=timezone.utc)
         self.assertEqual(self.a._return_analysis()['samples'],2)
         self.a._load_return_analysis()
         self.assertEqual(self.a._return_analysis()['samples'],2)
