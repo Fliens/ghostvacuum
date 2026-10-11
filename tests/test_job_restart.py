@@ -122,3 +122,52 @@ class JobRestart(unittest.TestCase):
         a=self.restore();a._observe_active_job()
         self.assertEqual(a._vacuum_job_problem,'restored_job_unconfirmed')
         a.call_service.assert_not_called()
+
+    def test_remaining_time_uses_current_time_without_completion_timestamp(self):
+        from datetime import timedelta
+        a=self.restore()
+        a.active_room='office'
+        a.active_room_started_at=a.datetime()-timedelta(minutes=3)
+        a.active_room_planned_duration_min=10
+        self.assertEqual(a._estimate_remaining_room_minutes('office'),7)
+
+    def test_dashboard_abort_intent_is_persisted_without_device_command(self):
+        a=self.restore();a.args['observation_mode']=False
+        a._save_state=Mock()
+        a._on_dashboard_abort(None,{'issued_at':self.fixture.now},None)
+        self.assertTrue(a.abort_requested);a._save_state.assert_called_once()
+        a.call_service.assert_not_called()
+
+    def test_old_abort_event_cannot_cancel_newer_job(self):
+        a=self.restore();a._save_state=Mock()
+        a._on_dashboard_abort(None,{'issued_at':a._vacuum_job.requested_at-1},None)
+        self.assertFalse(a.abort_requested);a._save_state.assert_not_called()
+
+    def test_explicit_cancel_closes_unconfirmed_job_only_when_fresh_and_parked(self):
+        a=self.restore();a.abort_requested=True
+        a._finish_observed_job=Mock()
+        s=robot.snapshot();s.update(fresh=True,phase='drying',vacuum_state='docked',station_status='drying')
+        a._robot_snapshot=lambda:s
+        a._observe_active_job()
+        a._finish_observed_job.assert_called_once_with('aborted')
+        self.assertIsNone(a._vacuum_job_problem)
+        a.call_service.assert_not_called()
+
+    def test_explicit_cancel_does_not_release_stale_moving_or_wrong_map_job(self):
+        for changes in ({'fresh':False},{'phase':'washing'}, {'running':True}, {'map_id':99}, {'active_segments':[1]}):
+            with self.subTest(changes=changes):
+                a=self.restore();a.abort_requested=True
+                a._finish_observed_job=Mock()
+                s=robot.snapshot();s.update(fresh=True,phase='drying',vacuum_state='docked',station_status='drying');s.update(changes)
+                a._robot_snapshot=lambda:s
+                a._observe_active_job()
+                a._finish_observed_job.assert_not_called()
+                a.call_service.assert_not_called()
+
+    def test_station_update_rechecks_waiting_manual_queue_without_timer_delay(self):
+        a=self.restore();a.active_room=None;a._room_handoff=None
+        a._observe_active_job=Mock();a._queued_manual_room=Mock(return_value='office')
+        a._check_cleaning=Mock();a._publish_dashboard_state=Mock()
+        a._on_vacuum_state_change(None,None,None,None,None)
+        a._check_cleaning.assert_called_once_with({})
+        a.call_service.assert_not_called()

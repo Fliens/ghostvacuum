@@ -93,6 +93,19 @@ class LiveDashboard(unittest.TestCase):
             self.assertNotIn('Reinigt', robot['title'])
             self.assertEqual(robot['subtitle'], 'Reinigung abgeschlossen')
 
+    def test_owned_room_is_active_during_initial_mop_preparation(self):
+        summary=self.summary()
+        summary['status'].update(observation_mode=False,active_room_manual=True)
+        summary['states']['sensors']['active_room']={'state':'Büro'}
+        summary['states']['vacuum'].update(state='cleaning')
+        summary['states']['vacuum']['attributes'].update(started=True,running=False,washing=True)
+        summary['states']['robot']={'signals':{'state':{'state':'washing'},'task_status':{'state':'room_cleaning'}}}
+        model=dashboard.build_live_dashboard_view(summary)
+        self.assertTrue(model['robot']['cleaning'])
+        self.assertEqual(model['robot']['title'],'Wäscht Mop')
+        self.assertEqual(model['robot']['origin_label'],'Manuell gestartet')
+        self.assertEqual(next(r for r in model['rooms'] if r['id']=='room_1')['group'],'active')
+
     def summary(self):
         return {
             'status': {'observation_mode': 'on', 'anyone_home': 'off', 'everyone_away': 'on',

@@ -10,6 +10,8 @@ import os
 import html
 import re
 import threading
+import uuid
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import urllib.error
@@ -21,11 +23,18 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+import importlib.util as _audit_import
+_audit_spec = _audit_import.spec_from_file_location("ghostvacuum_audit", Path(__file__).with_name("ghostvacuum_audit.py"))
+_audit_module = _audit_import.module_from_spec(_audit_spec)
+_audit_spec.loader.exec_module(_audit_module)
+EventJournal = _audit_module.EventJournal
+
 
 OPTIONS_PATH = Path("/data/options.json")
 SUPERVISOR_CORE_API = "http://supervisor/core/api"
 EVENT_START_ROOM = "vacuum_automation_start_room"
 EVENT_SET_ROOM_DUE = "vacuum_automation_set_room_due"
+EVENT_DASHBOARD_ABORT = "vacuum_automation_dashboard_abort"
 LOCAL_DEV_ENV = "VACUUM_DASHBOARD_DEV"
 LOCAL_OPTIONS_ENV = "VACUUM_DASHBOARD_OPTIONS"
 LOCAL_CONFIG_PATH = Path(__file__).with_name("config.yaml")
@@ -2065,7 +2074,13 @@ ROOM_ORDER_LOCK = threading.Lock()
 
 def save_dashboard_room_move(room_key, target, before=None):
     with ROOM_ORDER_LOCK:
-        return _save_dashboard_room_move(room_key, target, before)
+        try:
+            result = _save_dashboard_room_move(room_key, target, before)
+        except Exception:
+            if isinstance(room_key,str):audit_dashboard_event('planning_failed',room_key)
+            raise
+        audit_dashboard_event('planning_applied',room_key,action=target)
+        return result
 
 DASHBOARD_ORDER_PATH = Path(__file__).parent.parent / "storage" / "dashboard" / "order.json"
 
@@ -2097,6 +2112,55 @@ def save_dashboard_plan_changes(changes):
     temp = path.with_suffix('.tmp')
     temp.write_text(json.dumps(sorted(changes)))
     temp.replace(path)
+
+
+def audit_dashboard_event(event, room=None, new_request=False, **details):
+    try:
+        ids_path=DASHBOARD_ORDER_PATH.with_name('request_ids.json')
+        try:ids=json.loads(ids_path.read_text())
+        except (OSError,ValueError):ids={}
+        if room and (new_request or room not in ids):
+            ids[room]=str(uuid.uuid4());ids_path.parent.mkdir(parents=True,exist_ok=True)
+            temp=ids_path.with_suffix('.tmp');temp.write_text(json.dumps(ids));temp.replace(ids_path)
+        EventJournal(DASHBOARD_ORDER_PATH.with_name('events.jsonl')).append(event,source='dashboard',room=room,
+                    request_id=ids.get(room) if room else None,**details)
+    except (OSError,ValueError):logging.exception('Could not persist planning audit event')
+
+
+def read_job_events():
+    storage=DASHBOARD_ORDER_PATH.parent.parent
+    events=EventJournal(storage/'events.jsonl').read()+EventJournal(DASHBOARD_ORDER_PATH.with_name('events.jsonl')).read()
+    return sorted(events,key=lambda e:e['timestamp'])[-2000:]
+
+
+def render_job_events():
+    labels={'planned_manual':'Manuelle Vormerkung angefordert','planned_auto':'Automatische Vormerkung angefordert','active':'Direktstart angefordert',
+            'rest':'Entfernen aus Planung angefordert','waiting':'Wartet','start_requested':'Start angefordert','start_confirmed':'Start bestätigt',
+            'start_failed':'Start fehlgeschlagen','device_state':'Gerätestatus','abort_requested':'Abbruch angefordert',
+            'aborted':'Abgebrochen','completed':'Abgeschlossen','tracking_blocked':'Auftragsverfolgung blockiert','planning_applied':'Planung übernommen',
+            'planning_failed':'Planung fehlgeschlagen','service_started':'Dienst gestartet'}
+    descriptions={'cleaning':'Reinigt','washing':'Mopwäsche','returning':'Rückkehr','docked':'Angedockt',
+                  'drying':'Mop trocknet','dashboard':'Über Dashboard','command_failed':'Gerätebefehl fehlgeschlagen',
+                  'robot_stale':'Gerätedaten veraltet','battery_low_or_unknown':'Akku zu niedrig oder unbekannt',
+                  'station_busy_or_unknown':'Station beschäftigt oder unbekannt','previous_job_unresolved':'Vorheriger Auftrag ungeklärt'}
+    groups={}
+    for event in reversed(read_job_events()):
+        key=event.get('request_id')
+        if key and key not in groups and len(groups)>=20:continue
+        if key:groups.setdefault(key,[]).append(event)
+    cards=[]
+    for key,events in groups.items():
+        latest=events[0];room=next((e.get('room_name') for e in events if e.get('room_name')),latest.get('room') or 'Auftrag')
+        lines=[]
+        for e in reversed(events[:100]):
+            detail=' · '.join(descriptions.get(str(e[k]),str(e[k])) for k in ('phase','reason') if e.get(k))
+            if e.get('room_progress') is not None:detail+=f' · Raum {e["room_progress"]} %'
+            if e.get('special_progress') is not None:detail+=f' · Fleckenreinigung {e["special_progress"]} %'
+            if e.get('blockers'):detail+=' · '+', '.join(descriptions.get(x,x) for x in e['blockers'])
+            stamp=datetime.fromisoformat(e['timestamp']).astimezone(ZoneInfo('Europe/Berlin')).strftime('%d.%m. %H:%M:%S')
+            lines.append(f'<li><time>{escape(stamp)}</time> <b>{escape(labels.get(e["event"],e["event"]))}</b> {escape(detail)}</li>')
+        cards.append(f'<details><summary>{escape(room)} · {escape(labels.get(latest["event"],latest["event"]))}</summary><ol>{"".join(lines)}</ol><small>Auftrag {escape(key)}</small></details>')
+    return '<section class="section job-timeline"><h2>Auftragsverlauf</h2>'+(''.join(cards) or '<p>Noch keine Ereignisse aufgezeichnet.</p>')+'</section>'
 
 
 def reset_dashboard_plan_model(model):
@@ -2151,6 +2215,7 @@ def _save_dashboard_room_move(room_key, target, before=None):
     room = next((r for r in model['rooms'] if r['id'] == room_key), None)
     if not room or room['enabled'] is not True or target not in {'active','planned','planned_manual','planned_auto','rest'}:
         raise ValueError('Dieser Raum kann hier nicht abgelegt werden.')
+    audit_dashboard_event(target,room_key,new_request=target=='active' or (room['group']!='planned' and target.startswith('planned')))
     if target == 'rest':
         if room['group'] == 'rest':
             rest = [r for r in model['rooms'] if r['group']=='rest' and r['id']!=room_key]
@@ -2217,6 +2282,7 @@ def _save_dashboard_room_move(room_key, target, before=None):
         raise
     stop = active and (target == 'active' or active['id'] == room_key)
     if stop:
+        fire_event(EVENT_DASHBOARD_ABORT, {'issued_at':datetime.now().astimezone().timestamp()})
         service_call('vacuum','return_to_base',load_options().get('vacuum_entity'))
     elif target == 'active':
         fire_event(EVENT_START_ROOM, {'room_key':room_key})
@@ -2818,7 +2884,11 @@ def build_live_dashboard_view(summary):
         if dashboard_flag(attrs.get(flag)) or device_state == device_value:
             display_state = display
             break
-    cleaning = display_state in {'cleaning', 'paused'} and not completed
+    preparing_owned_room = (bool(active_room_label(summary))
+                            and dashboard_flag(attrs.get('started'))
+                            and task_status in {'room_cleaning','segment_cleaning'}
+                            and display_state in {'washing','returning_to_wash'})
+    cleaning = (display_state in {'cleaning', 'paused'} or preparing_owned_room) and not completed
     catalog = summary.get('room_segments') or []
     current_segment = attrs.get('current_segment') if cleaning else None
     active_name = active_room_label(summary) if cleaning else ''
@@ -3643,6 +3713,7 @@ def render_settings_html() -> str:
         "settings_cleaning_defaults": render_settings_cleaning_defaults(summary),
         "settings_system": render_settings_system(summary),
         "settings_analysis": render_settings_analysis(summary),
+        "settings_job_events": render_job_events(),
     }
     output = load_settings_template()
     for key, value in replacements.items():
@@ -5104,7 +5175,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         room_panel = presence_panel + render_robot_diagnostics(summary) + room_panel
         content = re.sub(r'<section class="card queue-card".*?</section>', lambda m: room_panel, content, count=1, flags=re.S)
         content = content.replace('</head>', '<style>.hero-settings-list,.presence-overview,.travel-guard,.dashboard-right{display:none!important}.dashboard-grid{grid-template-columns:1fr!important}</style></head>')
-        if urllib.parse.urlparse(self.path).path == "/settings":
+        if urllib.parse.self.path.split('?',1)[0] == "/settings":
             script = '<script>function lockObservation(){document.querySelectorAll("[data-setting-key=enabled],[data-action=repair-helpers],[data-clear-text]").forEach(e=>{e.disabled=true;e.title="Im Beobachtungsbetrieb gesperrt";if(e.type==="checkbox")e.checked=false;});}lockObservation();new MutationObserver(lockObservation).observe(document.body,{childList:true,subtree:true});</script>'
         else:
             script = '<script>function lockObservation(){document.querySelectorAll("button:not([data-tab]),input,select,textarea").forEach(e=>{e.disabled=true;e.title="Im Beobachtungsbetrieb gesperrt";});}lockObservation();new MutationObserver(lockObservation).observe(document.body,{childList:true,subtree:true});</script>'
@@ -5112,6 +5183,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/job_events":
+            self._json_response({"events":read_job_events()})
+            return
         if parsed.path == "/api/analysis":
             self._json_response({"html": render_settings_analysis(build_summary())})
             return
@@ -5285,6 +5359,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            fire_event(EVENT_DASHBOARD_ABORT, {"issued_at":datetime.now().astimezone().timestamp()})
             service_call("vacuum", "return_to_base", vacuum_entity)
             self._json_response({"ok": True})
         except urllib.error.HTTPError as err:
@@ -5550,6 +5625,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(file_path.read_bytes())
 
     def _json_response(self, payload: dict, status: int = 200):
+        if status >= 400:
+            logging.warning('Dashboard request failed: %s %s status=%s',self.command,self.path.split('?',1)[0],status)
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
@@ -5564,6 +5641,13 @@ class DashboardHTTPServer(ThreadingHTTPServer):
 
 
 def main():
+    log_path=DASHBOARD_ORDER_PATH.with_name('dashboard.log')
+    log_path.parent.mkdir(parents=True,exist_ok=True)
+    handler=RotatingFileHandler(log_path,maxBytes=5*1024*1024,backupCount=5)
+    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+    logging.getLogger().addHandler(handler)
+    logging.getLogger().setLevel(logging.INFO)
+    logging.info('Dashboard service started')
     port = int(os.environ.get("SIDEBAR_REDIRECT_PORT", "8099"))
     server = DashboardHTTPServer(("0.0.0.0", port), DashboardHandler)
     server.serve_forever()

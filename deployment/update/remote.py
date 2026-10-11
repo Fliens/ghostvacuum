@@ -1,4 +1,6 @@
 """Transactional code update. Run via update.py on the configured Runtipi host."""
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import argparse
 import ast
 import fcntl
@@ -65,6 +67,13 @@ class Services:
                     assert run('docker','inspect','--format','{{.State.Running}}',c).strip() == 'true'
                 started = run('docker','inspect','--format','{{.State.StartedAt}}',CONTAINERS[0]).strip()
                 logs = run('docker','logs','--since',started,CONTAINERS[0])
+                logfile=ROOT/'storage/logs/appdaemon.log'
+                if logfile.exists():
+                    since=datetime.fromisoformat(started[:26]+'+00:00').astimezone(ZoneInfo('Europe/Berlin')).strftime('%Y-%m-%d %H:%M:%S')
+                    with logfile.open('rb') as stream:
+                        stream.seek(max(0,logfile.stat().st_size-2*1024*1024))
+                        lines=stream.read().decode(errors='replace').splitlines()
+                    logs+='\n'+'\n'.join(line for line in lines if line[:19]>=since)
                 assert 'Vacuum Automation initialisiert' in logs, 'App initialisiert nicht'
                 with urllib.request.urlopen('http://172.27.30.30:8099/api/dashboard',timeout=10) as r:
                     d = json.load(r)
@@ -81,7 +90,7 @@ def manifest_files(payload):
     m = json.loads((payload/'manifest.json').read_text())
     if not re.fullmatch(r'[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}', m['release']):
         raise ValueError('Ungültige Versionskennung')
-    allowed = {'apps/vacuum_automation.py','web/redirect_dashboard.py'}
+    allowed = {'apps/vacuum_automation.py','web/redirect_dashboard.py','apps/ghostvacuum_audit.py','web/ghostvacuum_audit.py'}
     for rel, digest in m['files'].items():
         p = Path(rel)
         if p.is_absolute() or '..' in p.parts or not (rel in allowed or rel.startswith('web/dashboard/')):

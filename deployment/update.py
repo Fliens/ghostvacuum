@@ -14,7 +14,9 @@ import uuid
 REPO = Path(__file__).resolve().parent.parent
 
 def build(dest):
-    files = {'apps/vacuum_automation.py': REPO/'apps/vacuum_automation/vacuum_automation.py',
+    files = {'apps/ghostvacuum_audit.py': REPO/'apps/vacuum_automation/ghostvacuum_audit.py',
+             'web/ghostvacuum_audit.py': REPO/'addon/ghostvacuum/ghostvacuum_audit.py',
+             'apps/vacuum_automation.py': REPO/'apps/vacuum_automation/vacuum_automation.py',
              'web/redirect_dashboard.py': REPO/'addon/ghostvacuum/redirect_dashboard.py'}
     for p in (REPO/'addon/ghostvacuum/dashboard').rglob('*'):
         if p.is_file() and '__pycache__' not in p.parts:

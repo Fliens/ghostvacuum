@@ -1,0 +1,19 @@
+# Merge at the top level of the existing AppDaemon configuration.
+# /conf/storage must be bind-mounted to persistent host storage.
+logs:
+  main_log:
+    filename: /conf/storage/logs/appdaemon.log
+    log_size: 5242880
+    log_generations: 5
+  error_log:
+    filename: /conf/storage/logs/error.log
+    log_size: 5242880
+    log_generations: 5
+  access_log:
+    filename: /conf/storage/logs/access.log
+    log_size: 5242880
+    log_generations: 5
+  diag_log:
+    filename: /conf/storage/logs/diag.log
+    log_size: 5242880
+    log_generations: 5

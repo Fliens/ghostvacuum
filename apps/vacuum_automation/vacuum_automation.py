@@ -19,14 +19,22 @@ from datetime import datetime, timedelta
 import json
 import math
 import time
+import uuid
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 
 import appdaemon.plugins.hass.hassapi as hass
 
+import importlib.util as _audit_import
+_audit_spec = _audit_import.spec_from_file_location("ghostvacuum_audit", Path(__file__).with_name("ghostvacuum_audit.py"))
+_audit_module = _audit_import.module_from_spec(_audit_spec)
+_audit_spec.loader.exec_module(_audit_module)
+EventJournal = _audit_module.EventJournal
+
 EVENT_START_ROOM = "vacuum_automation_start_room"
 EVENT_SET_ROOM_DUE = "vacuum_automation_set_room_due"
+EVENT_DASHBOARD_ABORT = "vacuum_automation_dashboard_abort"
 
 
 def robot_bool(value):
@@ -89,12 +97,13 @@ class VacuumJobTracker:
         self.progress_task_type = None
         self.progress_schema = 2
         self.finished_at = None
+        self.request_id = None
 
     def checkpoint(self):
         return {key: getattr(self, key) for key in (
             "segment", "map_id", "requested_at", "baseline_history", "timeout",
             "accepted_at", "result", "problem", "room_progress_percent", "task_started_at",
-            "special_progress_percent", "progress_task_type", "progress_schema", "finished_at")}
+            "special_progress_percent", "progress_task_type", "progress_schema", "finished_at", "request_id")}
 
     @classmethod
     def restore(cls, data):
@@ -118,6 +127,7 @@ class VacuumJobTracker:
         special = data.get("special_progress_percent")
         if special is not None and not 0 <= special <= 100:
             raise ValueError("Invalid saved special progress")
+        job.request_id = data.get("request_id") if isinstance(data.get("request_id"), str) else None
         job.finished_at = data.get("finished_at")
         job.special_progress_percent = special
         job.progress_task_type = data.get("progress_task_type")
@@ -248,9 +258,8 @@ class VacuumAutomation(hass.Hass):
         self.notify_service = self.args.get("notify_service", "notify/mobile_app")
         self.dashboard_path = self.args.get("dashboard_path", "")
         self.state_helper = restart_state_entity(self.args)
-        self.one_time_room_override_entity = self.args.get(
-            "one_time_room_override_entity",
-            f"input_text.{self.args.get('helper_prefix', 'vacuum_automation')}_one_time_room_override",
+        self.one_time_room_override_entity = self.args.get("one_time_room_override_entity") or (
+            f"input_text.{self.args.get('helper_prefix', 'vacuum_automation')}_one_time_room_override"
         )
         self.enabled_entity = self.args.get("enabled_entity")
         self.learning_enabled_entity = self.args.get(
@@ -378,6 +387,7 @@ class VacuumAutomation(hass.Hass):
         self._load_history_storage()
         self._load_state()
         self._restore_confirmed_cleaning_times()
+        self._audit_event("service_started", restored=bool(self.active_room))
 
         self.run_every(
             self._check_cleaning,
@@ -406,6 +416,7 @@ class VacuumAutomation(hass.Hass):
         )]:
             self.listen_state(self._on_vacuum_state_change, entity, attribute="all")
         self.listen_event(self._on_dashboard_start_room, EVENT_START_ROOM)
+        self.listen_event(self._on_dashboard_abort, EVENT_DASHBOARD_ABORT)
         self.listen_event(self._on_dashboard_set_room_due, EVENT_SET_ROOM_DUE)
         if self.one_time_room_override_entity:
             self.listen_state(self._on_dashboard_queue_change, self.one_time_room_override_entity)
@@ -435,6 +446,37 @@ class VacuumAutomation(hass.Hass):
             self.log("Vacuum Automation initialisiert [SIMULATION MODE - keine echten Vacuum-Befehle]")
         else:
             self.log("Vacuum Automation initialisiert")
+
+    def _audit_request_id(self, room, manual=False):
+        if manual or any(q["room"]==room for q in self._dashboard_queue()):
+            try:
+                ids=json.loads((self.storage_dir/'dashboard'/'request_ids.json').read_text())
+                if isinstance(ids.get(room),str):return ids[room]
+            except (OSError,ValueError,AttributeError):pass
+        key=(room,self.datetime().date().isoformat(),manual)
+        pending=getattr(self,'_audit_pending_ids',{})
+        identifier=pending.setdefault(key,str(uuid.uuid4()))
+        self._audit_pending_ids=pending
+        return identifier
+
+    def _audit_event(self, event, room=None, **details):
+        storage=getattr(self,'storage_dir',None)
+        if storage is None:return
+        room=room or getattr(self,'active_room',None)
+        job=getattr(self,'_vacuum_job',None) if room==getattr(self,'active_room',None) else None
+        manual=getattr(self,'active_room_manual',False) if job else bool(room and room==self._queued_manual_room())
+        request_id=(job.request_id or f"job:{job.requested_at}") if job else self._audit_request_id(room,manual) if room else None
+        fields=dict(source='automation',room=room,room_name=self._room_label(room) if room else None,
+                    request_id=request_id,job_id=f"{job.map_id}:{job.segment}:{job.requested_at}" if job else None,**details)
+        signature=json.dumps(fields,sort_keys=True)
+        last=getattr(self,'_audit_last',{})
+        key=(request_id,event)
+        if last.get(key)==signature:return
+        try:
+            EventJournal(storage/'events.jsonl').append(event,**fields)
+            last[key]=signature;self._audit_last=last
+        except (OSError,ValueError) as error:
+            self.log(f"Ereignisprotokoll konnte nicht gespeichert werden: {type(error).__name__}",level='WARNING')
 
     def _load_history_storage(self):
         """Load persistent history and learned durations from disk."""
@@ -721,7 +763,7 @@ class VacuumAutomation(hass.Hass):
             if state.get("state") == option:
                 continue
             # Never reconfigure a moving robot. A handoff requires matching readback.
-            if self._robot_snapshot()["phase"] != "docked":
+            if not self._robot_parked_for_start(self._robot_snapshot()):
                 return False
             if option not in state.get("attributes", {}).get("options", []):
                 self.log(f"Reinigungsoption derzeit nicht verfügbar: {suffix}",level="WARNING")
@@ -1906,16 +1948,22 @@ class VacuumAutomation(hass.Hass):
         return room is None or (room != handoff["room"]
                                 and self._effective_cleaning_profile(room) == handoff["profile"])
 
+    @staticmethod
+    def _robot_parked_for_start(snapshot):
+        return snapshot["phase"] == "docked" or (
+            snapshot["phase"] == "drying" and snapshot.get("vacuum_state") == "docked"
+            and snapshot.get("started") is False and snapshot.get("running") is False)
+
     def _robot_start_blockers(self, snapshot=None, room=None) -> List[str]:
         snapshot = snapshot or self._robot_snapshot()
         blockers = []
-        if snapshot["phase"] != "docked" and not self._room_handoff_allowed(snapshot, room):
+        if not self._robot_parked_for_start(snapshot) and not self._room_handoff_allowed(snapshot, room):
             blockers.append(f"robot_{snapshot['phase']}")
         if snapshot["task_status"] != "completed":
             blockers.append("task_not_finished")
         if snapshot["started"] is not False or snapshot["running"] is not False:
             blockers.append("task_active_or_unknown")
-        if snapshot["station_status"] != "idle":
+        if snapshot["station_status"] != "idle" and not (snapshot["station_status"] == "drying" and self._robot_parked_for_start(snapshot)):
             blockers.append("station_busy_or_unknown")
         min_battery = float(self.args.get("minimum_start_battery", 30))
         confirmation_timeout = float(self.args.get("start_confirmation_timeout_sec", 120))
@@ -2089,6 +2137,21 @@ class VacuumAutomation(hass.Hass):
         if not self.active_room:
             self._check_cleaning({})
 
+    def _on_dashboard_abort(self, event_name, data, kwargs):
+        # The dashboard sends the device command. Persist its explicit intent
+        # so terminal idle data can close this tracked job, even after restart.
+        if self.args.get("observation_mode", False) or not self.active_room or not self._vacuum_job:
+            return
+        issued_at = (data or {}).get("issued_at")
+        if (not isinstance(issued_at, (int, float)) or not math.isfinite(issued_at)
+                or issued_at < self._vacuum_job.requested_at
+                or issued_at > self.datetime(aware=True).timestamp() + 5):
+            return
+        self._audit_event("abort_requested",reason="dashboard")
+        self.abort_requested = True
+        self._room_handoff = None
+        self._save_state()
+
     def _on_dashboard_start_room(self, event_name, data, kwargs):
         room = str((data or {}).get("room_key") or "").strip()
         self._manual_start_generation = getattr(self, "_manual_start_generation", 0) + 1
@@ -2102,6 +2165,7 @@ class VacuumAutomation(hass.Hass):
         if queued and self._queued_manual_room() != room:
             return
         if not (self._can_start_manual_cleaning(room) if manual else self._can_start_cleaning()):
+            self._audit_event("waiting",room,blockers=self._robot_start_blockers(),manual=manual)
             return
         snapshot = self._robot_snapshot()
         if self._robot_start_blockers(snapshot, room):
@@ -2148,6 +2212,9 @@ class VacuumAutomation(hass.Hass):
                 max((entry["timestamp"] for entry in snapshot["history"]), default=0),
                 float(self.args.get("start_confirmation_timeout_sec", 120)),
             )
+            self._vacuum_job.request_id=self._audit_request_id(room,manual)
+            getattr(self,'_audit_pending_ids',{}).pop((room,self.datetime().date().isoformat(),manual),None)
+            self._audit_event("start_requested",room,manual=manual,mode=profile["mode"])
             if not self._save_job_checkpoint():
                 self._vacuum_job_problem = "job_checkpoint_failed"
                 self._save_state()
@@ -2161,6 +2228,7 @@ class VacuumAutomation(hass.Hass):
                     repeats=1 if profile["mode"] == "cleangenius" else profile["repeats"],
                 )
             except Exception:
+                self._audit_event("start_failed",room,reason="command_failed")
                 self._vacuum_job_problem = "command_failed"
                 self._save_state()
                 self._publish_dashboard_state("start_unbestaetigt")
@@ -2235,7 +2303,7 @@ class VacuumAutomation(hass.Hass):
 
         elapsed = max(
             0,
-            int((finished_at - self.active_room_started_at).total_seconds() / 60),
+            int((self.datetime() - self.active_room_started_at).total_seconds() / 60),
         )
         return max(1, duration - elapsed)
 
@@ -2251,6 +2319,7 @@ class VacuumAutomation(hass.Hass):
             )
 
         entry = {
+            "request_id": self._vacuum_job.request_id if self._vacuum_job else None,
             "room": room,
             "room_name": self._room_label(room),
             "started_at": self.active_room_started_at.isoformat()
@@ -2298,6 +2367,7 @@ class VacuumAutomation(hass.Hass):
         if getattr(self, "_restored_job_pending", False) or getattr(self, "_vacuum_job_problem", None):
             return  # Never control a restored task before its identity is verified.
 
+        self._audit_event("abort_requested",reason=reason)
         self.abort_requested = True
         if self.simulation_mode:
             self.log(f"[SIMULATION] Breche Auto-Reinigung ab: {reason}")
@@ -2813,6 +2883,17 @@ class VacuumAutomation(hass.Hass):
     def _observe_active_job(self):
         if self.args.get("observation_mode", False) or not self.active_room or self.simulation_mode:
             return
+        if self.abort_requested and self._vacuum_job:
+            snapshot = self._robot_snapshot()
+            if (snapshot.get("fresh") is True and self._robot_parked_for_start(snapshot)
+                    and snapshot.get("task_status") == "completed"
+                    and snapshot.get("started") is False and snapshot.get("running") is False
+                    and not snapshot.get("active_segments")
+                    and snapshot.get("map_id") == self._vacuum_job.map_id):
+                self._vacuum_job_problem = None
+                self._restored_job_pending = False
+                self._finish_observed_job("aborted")
+                return
         if getattr(self, "_restored_job_pending", False):
             snapshot = self._robot_snapshot()
             job = self._vacuum_job
@@ -2836,6 +2917,7 @@ class VacuumAutomation(hass.Hass):
                 return
             self._vacuum_job_problem = None
         if self._vacuum_job_problem:
+            self._audit_event("tracking_blocked",reason=self._vacuum_job_problem)
             return
         if self._vacuum_job is None:
             self._vacuum_job_problem = "restored_job_unconfirmed"
@@ -2844,20 +2926,30 @@ class VacuumAutomation(hass.Hass):
         previously_accepted = self._vacuum_job.accepted_at is not None
         snapshot = self._robot_snapshot()
         result = self._vacuum_job.observe(snapshot, self.datetime(aware=True).timestamp())
+        self._audit_event("device_state",phase=snapshot["phase"],task_status=snapshot["task_status"],
+                          room_progress=(int(self._vacuum_job.room_progress_percent//5)*5 if self._vacuum_job.room_progress_percent is not None else None),
+                          special_progress=(int(self._vacuum_job.special_progress_percent//5)*5 if self._vacuum_job.special_progress_percent is not None else None))
         if self._vacuum_job.problem:
+            self._audit_event("tracking_blocked",reason=self._vacuum_job.problem)
             self._vacuum_job_problem = self._vacuum_job.problem
             self._save_state()
             return
         if not previously_accepted and self._vacuum_job.accepted_at is not None:
+            self._audit_event("start_confirmed")
             self._send_start_notification(self.active_room)
         if result not in {"completed", "aborted"}:
             self._save_job_checkpoint()
             return
+        self._finish_observed_job(result)
+
+    def _finish_observed_job(self, result):
         room = self.active_room
         outcome = "aborted" if self.abort_requested or result == "aborted" else "completed"
         finished_at = datetime.fromtimestamp(self._vacuum_job.finished_at, tz=self.datetime(aware=True).tzinfo) if self._vacuum_job.finished_at else self.datetime()
         if self.datetime().tzinfo is None:
             finished_at = finished_at.replace(tzinfo=None)
+        self._audit_event(outcome,room,confirmed_progress=self._vacuum_job.room_progress_percent,
+                          finished_at=finished_at.isoformat())
         self._record_history_entry(room, outcome, finished_at=finished_at)
         if self._counts_as_cleaned(room, outcome, self._vacuum_job.room_progress_percent):
             self.last_cleaned[room] = finished_at
@@ -2896,8 +2988,8 @@ class VacuumAutomation(hass.Hass):
     def _on_vacuum_state_change(self, entity, attribute, old, new, kwargs):
         self._observe_active_job()
         handoff = getattr(self, "_room_handoff", None)
-        if (not self.active_room and handoff and self._room_handoff_allowed(self._robot_snapshot())
-                and (self._queued_manual_room() or handoff["automatic"])):
+        if not self.active_room and (self._queued_manual_room() or (
+                handoff and handoff["automatic"] and self._room_handoff_allowed(self._robot_snapshot()))):
             self._check_cleaning({})
         self._publish_dashboard_state("staubsauger_update")
 

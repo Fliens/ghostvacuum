@@ -1265,6 +1265,12 @@
     .profile-fields [hidden],.profile-fields[hidden] {display:none!important;}
     @media(max-width:700px) {.profile-fields {grid-template-columns:repeat(2,minmax(0,1fr));}.room-cleaning summary span {display:block;margin:5px 0 0;}}
     @media(max-width:430px) {.profile-fields {grid-template-columns:1fr;}}
+    .job-timeline details {border-top:1px solid var(--border,#dce3dd);padding:12px 0;}
+    .job-timeline summary {cursor:pointer;font-weight:600;}
+    .job-timeline ol {padding-left:20px;margin:12px 0;}
+    .job-timeline li {margin:8px 0;line-height:1.5;overflow-wrap:anywhere;}
+    .job-timeline time {color:#6c7a70;font-size:.85em;display:inline-block;margin-right:8px;}
+    .job-timeline small {color:#6c7a70;overflow-wrap:anywhere;}
   </style>
 </head>
 <body>
@@ -1368,6 +1374,7 @@
         </div>
       </section>
 
+      <div id="settings-job-events">{{{settings_job_events}}}</div>
       <div id="settings-analysis">{{{settings_analysis}}}</div>
 
       <section class="section debug-section">

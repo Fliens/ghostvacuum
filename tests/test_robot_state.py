@@ -57,7 +57,7 @@ class RobotState(unittest.TestCase):
     def test_station_visits_and_pause_have_precedence_over_docked(self):
         attrs = self.states['vacuum.willi']['attributes']
         for flag, phase in [('washing', 'washing'), ('returning_to_wash', 'returning_to_wash'),
-                            ('drying', 'drying'), ('paused', 'paused'), ('draining', 'draining')]:
+                            ('paused', 'paused'), ('draining', 'draining')]:
             with self.subTest(flag=flag):
                 attrs[flag] = True
                 self.assertEqual(self.app._robot_snapshot()['phase'], phase)
@@ -261,3 +261,11 @@ class RestartStateHelper(unittest.TestCase):
     def test_explicit_helper_and_custom_prefix_are_preserved(self):
         self.assertEqual(module.restart_state_entity({'helper_prefix':'other'}),'input_text.other_state')
         self.assertEqual(module.restart_state_entity({'state_helper':'input_text.custom'}),'input_text.custom')
+
+class DryingStart(unittest.TestCase):
+    def test_only_parked_drying_is_ready(self):
+        a=module.VacuumAutomation();a.args={};a.datetime=lambda:NOW
+        s=snapshot();s.update(phase='drying',vacuum_state='docked',station_status='drying')
+        self.assertEqual(a._robot_start_blockers(s),[])
+        for changes in ({'phase':'washing'},{'running':True},{'vacuum_state':'cleaning'}, {'station_status':'washing'}, {'phase':'stale'}):
+            with self.subTest(changes=changes):self.assertTrue(a._robot_start_blockers({**s,**changes}))

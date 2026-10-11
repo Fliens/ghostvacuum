@@ -348,12 +348,51 @@ header .observation-label{font-size:11px;color:#60715b}.live-updated{font-size:1
  .combined>.section{flex-direction:column}
 }
 
-.room-change-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#d48325;vertical-align:super;margin-left:4px;flex:none}
+.room-change-dot{position:absolute;top:-3px;left:-3px;display:block;width:8px;height:8px;border-radius:50%;background:#d48325;margin:0;box-shadow:0 0 0 2px #fff;z-index:3;pointer-events:none}
 
 .room-change-dot.skipped{background:#c64d43}
 
 .topline[hidden]{display:none}
 
 /* Keep the permanent planning lists in place while dragging. */
-.choosing-plan .planned-subgroup>.drop-list{outline:1px dashed #b8c7ae;outline-offset:2px}
-.choosing-plan .planned-subgroup>.drop-list.drop-over{outline:2px solid #99bf71;outline-offset:2px;background:#e9f4dc}
+.choosing-plan .planned-subgroup>.drop-list{position:relative;outline:none;border-color:transparent}
+.choosing-plan .planned-subgroup>.drop-list::after{content:'';position:absolute;inset:0;border:1px dashed #b8c7ae;border-radius:inherit;pointer-events:none}
+.choosing-plan .planned-subgroup>.drop-list>.plan-empty{border-color:transparent}
+.choosing-plan .planned-subgroup>.drop-list.drop-over{outline:none;background:#f1f7ea}
+.choosing-plan .planned-subgroup>.drop-list.drop-over::after{border:2px solid #99bf71}
+
+/* Give each board section its own visible boundary. */
+#room-board{gap:14px}
+#room-board>.board-group{border:1px solid #cdd8c8;border-radius:12px;padding:0;background:#edf2e9}
+#room-board>.board-group>.group-heading{background:#edf2e9;border-radius:11px 11px 0 0;padding:8px 10px;margin:0}
+#room-board>.board-group>.main-drop-list{margin:0;padding:8px;border:0;border-radius:12px 12px 11px 11px;background:#fff}
+#room-board>.board-group>.group-heading h3{font-weight:700}
+
+/* Drag highlights stay inside the rounded content surface. */
+#room-board>.board-group>.main-drop-list.drop-over{outline:none;box-shadow:inset 0 0 0 2px #99bf71;background:#f4f8ef}
+#room-board>.board-group>.main-drop-list.drop-over>.empty-slot{border-color:transparent}
+
+/* Keep action captions level, independent of the icon's dimensions. */
+.board-row .room-actions button{display:grid;grid-template-rows:20px 10px;justify-items:center;align-content:center;gap:4px}
+.board-row .room-actions button small{grid-row:2;align-self:center;line-height:10px}
+.board-row .remove-plan-icon{font-size:23px;line-height:20px;height:20px;width:20px}
+.planned-details{row-gap:6px}
+.planned-meta{gap:6px 8px}
+.due-pill{padding:2px 6px;min-height:17px;line-height:1.25}
+
+/* The cleaning duration belongs to the room name, freeing its old column. */
+.board-row .room-duration{display:block;margin:3px 0 0;font-size:9px;font-weight:400;color:var(--muted);white-space:nowrap}
+.board-row:not(.active){grid-template-columns:17px 21px minmax(110px,1fr) minmax(120px,1.4fr) 163px}
+@media(max-width:1100px) and (min-width:761px){.board-row:not(.active){grid-template-columns:13px 16px minmax(85px,1fr) minmax(90px,1.2fr) 163px}}
+@media(max-width:760px) and (min-width:481px){
+ .board-row:not(.active){grid-template-columns:10px 10px minmax(80px,1fr) minmax(90px,1.3fr) 157px}
+ .board-row:not(.active)>.room-actions{grid-column:5;grid-row:1}
+}
+@media(max-width:480px){
+ .board-row:not(.active){grid-template-columns:10px minmax(0,1fr) 147px}
+ .board-row:not(.active)>.handle,.board-row:not(.active)>.room-actions{grid-row:1/3}
+ .board-row .room-duration{font-size:9px}
+}
+
+.room-name-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 7px}
+.room-name-line .due-pill{font-weight:400;font-size:8px}

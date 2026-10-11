@@ -35,13 +35,16 @@ class UpdateProcess(unittest.TestCase):
         self.root=Path(self.temp.name)/'live';self.root.mkdir()
         self.payload=Path(self.temp.name)/'payload';self.payload.mkdir()
         self.backups=Path(self.temp.name)/'backups'
-        self.files={'apps/vacuum_automation.py':'version="new"\n','web/redirect_dashboard.py':'version="new"\n','web/dashboard/new.css':'body{}'}
+        self.files={'apps/ghostvacuum_audit.py':'version="new"\n','web/ghostvacuum_audit.py':'version="new"\n','apps/vacuum_automation.py':'version="new"\n','web/redirect_dashboard.py':'version="new"\n','web/dashboard/new.css':'body{}'}
         for rel,data in self.files.items():
             p=self.payload/rel;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(data)
             if not rel.endswith('new.css'):
                 old=self.root/rel;old.parent.mkdir(parents=True,exist_ok=True);old.write_text('version="old"\n')
         (self.root/'options.yaml').write_text('do_not_change: true\n')
         (self.root/'history.json').write_text('["existing history"]')
+        (self.root/'storage/logs').mkdir(parents=True)
+        (self.root/'storage/logs/appdaemon.log').write_text('existing log')
+        (self.root/'storage/events.jsonl').write_text('existing events')
         self.manifest={'release':'20261010T200000Z-0123abcd','files':{rel:hashlib.sha256(data.encode()).hexdigest() for rel,data in self.files.items()}}
         self.save_manifest()
     def save_manifest(self):(self.payload/'manifest.json').write_text(json.dumps(self.manifest))
@@ -49,6 +52,8 @@ class UpdateProcess(unittest.TestCase):
         services=FakeServices();b=u.update(self.payload,self.root,self.backups,services)
         self.assertEqual((self.root/'apps/vacuum_automation.py').read_text(),'version="new"\n')
         self.assertEqual((self.root/'options.yaml').read_text(),'do_not_change: true\n')
+        self.assertEqual((self.root/'storage/events.jsonl').read_text(),'existing events')
+        self.assertEqual((self.root/'storage/logs/appdaemon.log').read_text(),'existing log')
         with tarfile.open(b/'data.tar.gz') as t:
             self.assertEqual(t.extractfile('ghostvacuum/history.json').read(),b'["existing history"]')
         self.assertEqual((b/'data.tar.gz').stat().st_mode&0o777,0o600)
@@ -60,6 +65,8 @@ class UpdateProcess(unittest.TestCase):
         self.assertEqual((self.root/'apps/vacuum_automation.py').read_text(),'version="old"\n')
         self.assertFalse((self.root/'web/dashboard/new.css').exists())
         self.assertEqual((self.root/'history.json').read_text(),'["existing history"]')
+        self.assertEqual((self.root/'storage/events.jsonl').read_text(),'existing events')
+        self.assertEqual((self.root/'storage/logs/appdaemon.log').read_text(),'existing log')
         self.assertEqual(services.events.count('health'),2)
         self.assertEqual(json.loads((self.backups/self.manifest['release']/'result.json').read_text())['status'],'rolled_back')
     def test_failed_recovery_stops_observer(self):
