@@ -30,7 +30,7 @@ class RoomDrag(unittest.TestCase):
     def test_replacement_retains_old_room_and_only_stops(self):
         self.model['rooms'][0]['group']='active';self.model['robot']['cleaning']=True
         dashboard.save_dashboard_room_move('b','active')
-        self.assertEqual(self.services.call_args_list[0].args[3]['value'],'["b","a"]')
+        self.assertEqual(self.services.call_args_list[0].args[3]['value'],'["!b","a"]')
         self.assertEqual(self.services.call_args_list[-1].args,('vacuum','return_to_base','vacuum.robot'))
         self.assertTrue(all(c.args[0] != dashboard.EVENT_START_ROOM for c in self.events.call_args_list))
 
@@ -45,3 +45,31 @@ class RoomDrag(unittest.TestCase):
         app.get_state=lambda _: '["a","b","c"]';app.call_service=unittest.mock.Mock()
         app._clear_one_time_room_override()
         app.call_service.assert_called_once_with('input_text/set_value',entity_id='input_text.order',value='["a","c"]')
+
+    def test_manual_queue_and_removing_label_do_not_command_robot(self):
+        dashboard.save_dashboard_room_move('b','planned_manual','a')
+        self.assertEqual(self.services.call_args.args[3]['value'],'["!b","a"]')
+        self.events.assert_not_called()
+        self.model['rooms'][1]['manual_queued']=True
+        dashboard.save_dashboard_room_move('b','planned_auto','a')
+        self.assertEqual(self.services.call_args.args[3]['value'],'["b","a"]')
+        self.events.assert_not_called()
+
+    def test_reordering_preserves_other_manual_labels(self):
+        self.model['rooms'][0]['manual_queued']=True
+        dashboard.save_dashboard_room_move('b','planned','a')
+        self.assertEqual(self.services.call_args.args[3]['value'],'["b","!a"]')
+
+    def test_queue_consumption_preserves_remaining_manual_modes(self):
+        app=module.VacuumAutomation();app.rooms={'a':{},'b':{},'c':{}}
+        app.one_time_room_override_entity='input_text.order';app.active_room='b'
+        app.get_state=lambda _: '["!a","!b","c"]';app.call_service=unittest.mock.Mock()
+        app._clear_one_time_room_override()
+        app.call_service.assert_called_once_with('input_text/set_value',entity_id='input_text.order',value='["!a","c"]')
+
+    def test_unqueued_manual_start_never_consumes_another_rooms_entry(self):
+        app=module.VacuumAutomation();app.rooms={'a':{},'b':{}}
+        app.one_time_room_override_entity='input_text.order';app.active_room='b'
+        app.get_state=lambda _: '["!a"]';app.call_service=unittest.mock.Mock()
+        app._clear_one_time_room_override()
+        app.call_service.assert_not_called()

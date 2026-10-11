@@ -14,7 +14,7 @@ def snapshot():
         'phase': 'docked', 'task_status': 'completed', 'task_changed_at': NOW.timestamp() - 100,
         'station_status': 'idle', 'battery': 90, 'located': True, 'has_saved_map': True,
         'map_id': 23, 'room_ids': [1, 9], 'started': False, 'running': False,
-        'active_segments': [], 'history': [],
+        'active_segments': [], 'history': [], 'task_type': 'smart', 'task_type_changed_at': 0,
         'dnd': [{'enabled': True, 'start': '22:00', 'end': '08:00', 'repeats': 127}],
     }
 
@@ -174,6 +174,7 @@ class JobCorrelation(unittest.TestCase):
         app.last_cleaned = {}
         app.cleaned_during_absence = []
         app._robot_snapshot = lambda: self.data
+        app._clear_one_time_room_override = Mock()
         app._record_history_entry = Mock()
         app._save_state = Mock()
         app._publish_dashboard_state = Mock()
@@ -190,8 +191,9 @@ class JobCorrelation(unittest.TestCase):
             app.abort_requested = abort
             app._observe_active_job()
             app._observe_active_job()
-            app._record_history_entry.assert_called_once_with('office', 'aborted' if abort else 'completed')
+            app._record_history_entry.assert_called_once_with('office', 'aborted' if abort else 'completed', finished_at=datetime.fromtimestamp(self.data['task_changed_at'], tz=NOW.tzinfo))
             self.assertEqual('office' in app.last_cleaned, not abort)
+            self.assertEqual(app._clear_one_time_room_override.call_count, 0 if abort else 1)
             app.call_service.assert_not_called()
 
     def test_observer_never_adopts_or_records_a_real_job(self):
@@ -234,6 +236,7 @@ class JobCorrelation(unittest.TestCase):
         app._get_distance_km = lambda: 10
         app.vacuum_entity = 'vacuum.willi'
         app._clear_one_time_room_override = Mock()
+        app._save_job_checkpoint = Mock(return_value=True)
         app.log = Mock()
         app._send_start_notification = Mock()
         app._prepare_cleaning_profile = lambda room: True

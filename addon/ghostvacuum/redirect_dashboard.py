@@ -820,6 +820,8 @@ def collect_states(entity_map: Dict[str, Any]) -> Dict[str, Any]:
 
 
 ROBOT_SIGNAL_SUFFIXES = {
+    "task_type": "sensor.{base}_task_type",
+    "cleaning_progress": "sensor.{base}_cleaning_progress",
     "battery_level": "sensor.{base}_battery_level",
     "charging_state": "binary_sensor.{base}_charging_state",
     "state": "sensor.{base}_state",
@@ -1129,6 +1131,8 @@ def build_summary() -> dict:
             "anyone_home": status_attrs.get("anyone_home"),
             "everyone_away": status_attrs.get("everyone_away"),
             "reason": status_attrs.get("reason"),
+            "active_room": status_attrs.get("active_room"),
+            "active_room_manual": status_attrs.get("active_room_manual", False),
             "presence_summary": status_attrs.get("presence_summary", []),
             "travel_time_min": status_attrs.get("travel_time_min"),
             "travel_time_source": status_attrs.get("travel_time_source"),
@@ -1353,6 +1357,9 @@ def localize_vacuum_state(value: str) -> str:
         "cleaning": "Reinigt",
         "docked": "Angedockt",
         "returning": "Kehrt zurück",
+        "washing": "Wäscht Mop",
+        "returning_to_wash": "Kehrt zur Mopwäsche zurück",
+        "drying": "Trocknet Mop",
         "paused": "Pausiert",
         "idle": "Bereit",
         "unavailable": "Nicht erreichbar",
@@ -2036,12 +2043,24 @@ def visible_room_queue(summary: dict) -> List[dict]:
     return [room for room in queue if str(room.get("room", "")) != active_room]
 
 
-def parse_dashboard_room_order(raw):
+def parse_dashboard_queue(raw):
     try:
         value = json.loads(raw) if str(raw).startswith('[') else [raw]
     except (ValueError, TypeError):
         return []
-    return list(dict.fromkeys(room for room in value if isinstance(room, str) and room and room not in {'unknown','unavailable','none'})) if isinstance(value,list) else []
+    result = []
+    if isinstance(value, list):
+        for entry in value:
+            if not isinstance(entry, str):
+                continue
+            room = entry.removeprefix('!')
+            if room and room not in {'unknown', 'unavailable', 'none'} and not any(r['id'] == room for r in result):
+                result.append({'id': room, 'manual': entry.startswith('!')})
+    return result
+
+
+def parse_dashboard_room_order(raw):
+    return [r['id'] for r in parse_dashboard_queue(raw)]
 
 
 ROOM_ORDER_LOCK = threading.Lock()
@@ -2055,10 +2074,10 @@ def _save_dashboard_room_move(room_key, target, before=None):
         raise ValueError("Ungültiger Raum.")
     summary = build_summary()
     model = build_live_dashboard_view(summary)
-    if model['commands_locked'] or not model['automation_enabled']:
-        raise ValueError('Automatik muss aktiv und Gerätebefehle müssen freigegeben sein.')
+    if model['commands_locked']:
+        raise ValueError('Gerätebefehle müssen freigegeben sein.')
     room = next((r for r in model['rooms'] if r['id'] == room_key), None)
-    if not room or room['enabled'] is not True or target not in {'active','planned'}:
+    if not room or room['enabled'] is not True or target not in {'active','planned','planned_manual','planned_auto'}:
         raise ValueError('Dieser Raum kann hier nicht abgelegt werden.')
     active = next((r for r in model['rooms'] if r['group'] == 'active'), None)
     if target == 'active' and model['robot']['cleaning'] and active is None:
@@ -2073,7 +2092,12 @@ def _save_dashboard_room_move(room_key, target, before=None):
     else:
         index = order.index(before) if before in order else len(order)
         order.insert(index, room_key)
-    value = json.dumps(order, separators=(',', ':'))
+    manual = {r['id'] for r in model['rooms'] if r.get('manual_queued')}
+    if target in {'active', 'planned_manual'}:
+        manual.add(room_key)
+    elif target == 'planned_auto':
+        manual.discard(room_key)
+    value = json.dumps([('!' if key in manual else '') + key for key in order], separators=(',', ':'))
     if len(value) > 128:
         raise ValueError('Zu viele Räume für die manuelle Reihenfolge.')
     for key in [room_key] + ([active['id']] if target == 'active' and active else []):
@@ -2670,15 +2694,48 @@ def build_live_dashboard_view(summary):
                 permission_reason = 'Innerhalb des Puffers'
     cleaning_permission = {'ready': permission_ready, 'title': permission_title, 'reason': permission_reason}
     raw_state = state_value(vacuum, 'unknown')
-    cleaning = raw_state in {'cleaning', 'paused'}
+    signals = summary.get('states', {}).get('robot', {}).get('signals', {})
+    device_state = state_value(signals.get('state'), 'unknown')
+    task_status = state_value(signals.get('task_status'), 'unknown')
+    completed = task_status == 'completed' and attrs.get('started') in (False, 'off', 'false') and attrs.get('running') in (False, 'off', 'false')
+    display_state = raw_state
+    for flag, device_value, display in [('washing', 'washing', 'washing'),
+            ('returning_to_wash', 'returning_to_wash', 'returning_to_wash'),
+            ('returning', 'returning', 'returning'), ('drying', 'drying', 'drying')]:
+        if dashboard_flag(attrs.get(flag)) or device_state == device_value:
+            display_state = display
+            break
+    cleaning = display_state in {'cleaning', 'paused'} and not completed
     catalog = summary.get('room_segments') or []
     current_segment = attrs.get('current_segment') if cleaning else None
     active_name = active_room_label(summary) if cleaning else ''
     active_attrs = state_attrs(sensors.get('active_room')) if cleaning else {}
-    remaining = first_number(active_attrs.get('remaining_min'), attrs.get('remaining_time')) if cleaning else None
+    remaining = number_value(attrs.get('remaining_time')) if cleaning else None
+    if remaining is not None and (not math.isfinite(remaining) or remaining <= 0):
+        remaining = None
     progress = number_value(attrs.get('cleaning_progress')) if cleaning else None
     if progress is not None and (not math.isfinite(progress) or not 0 <= progress <= 100):
         progress = None
+    task_signal = summary.get('states', {}).get('robot', {}).get('signals', {}).get('task_type') or {}
+    progress_signal = summary.get('states', {}).get('robot', {}).get('signals', {}).get('cleaning_progress') or {}
+    task_type = state_value(task_signal, 'unknown')
+    progress = number_value(state_value(progress_signal, 'unknown')) if cleaning else None
+    if progress is not None and (not math.isfinite(progress) or not 0 <= progress <= 100):
+        progress = None
+    special_labels = {'water_stain': 'Fleckenreinigung', 'water_stain_paused': 'Fleckenreinigung',
+        'stain_cleaning': 'Fleckenreinigung', 'intensive_stain_cleaning': 'Intensive Fleckenreinigung',
+        'large_particle_cleaning': 'Partikelreinigung', 'small_particle_cleaning': 'Partikelreinigung'}
+    progress_scope = 'special' if task_type in special_labels else 'room'
+    try:
+        phase_start = datetime.fromisoformat(task_signal['last_changed']).timestamp()
+        progress_time = datetime.fromisoformat(progress_signal['last_changed']).timestamp()
+        if progress_time < phase_start + 15:
+            progress = None
+    except (KeyError, TypeError, ValueError):
+        progress = None
+    if task_type in {'unknown', 'unavailable', 'idle'}:
+        progress = None
+    progress_label = special_labels.get(task_type, 'Raumfortschritt')
     queue = ordered_room_queue(summary)
     rooms = []
     seen = set()
@@ -2709,18 +2766,32 @@ def build_live_dashboard_view(summary):
     for room in rooms:
         if room['group'] == 'active' and room is not selected_active:
             room['group'] = 'rest'
-    rooms.sort(key=lambda r: (0 if r['group'] == 'active' else 1 if r['group'] == 'planned' else 2, r['plan_rank'] if r['group'] == 'planned' else 0))
+    room_order = parse_dashboard_queue(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))
+    for room in rooms:
+        room['manual_queued'] = any(q['id'] == room['id'] and q['manual'] for q in room_order)
+        if room['enabled'] is True and room['group'] != 'active' and any(q['id'] == room['id'] for q in room_order):
+            room['group'] = 'planned'
+            room['plan_rank'] = next(i for i,q in enumerate(room_order) if q['id'] == room['id'])
+    rooms.sort(key=lambda r: (0 if r['group'] == 'active' else 1 if r['group'] == 'planned' else 2, r['plan_rank'] if r['group'] == 'planned' else (0 if r['enabled'] is True else 1 if r['enabled'] is None else 2) if r['group'] == 'rest' else 0))
     robot_metrics, station_metrics = build_hero_metrics(summary)
     battery = next((m['value'] for m in robot_metrics if m['label'] == 'Akku'), 'Nicht verfügbar')
-    subtitle = {'docked': 'An der Station', 'cleaning': 'Reinigung läuft', 'paused': 'Reinigung pausiert', 'returning': 'Rückkehr zur Station'}.get(raw_state, localize_vacuum_state(raw_state))
+    subtitle = {'docked': 'An der Station', 'cleaning': 'Reinigung läuft', 'paused': 'Reinigung pausiert', 'returning': 'Rückkehr zur Station'}.get(display_state, localize_vacuum_state(display_state))
     if diagnostics.get('phase') == 'stale':
         age = number_value(diagnostics.get('data_age_sec'))
         subtitle = 'Letzte Zustandsmeldung' + (f' vor {round(age / 60)} min' if age is not None else ' veraltet')
     elif diagnostics.get('phase') == 'error':
         subtitle = 'Gerätefehler · ' + str(diagnostics.get('error') or 'Prüfung erforderlich')
-    title = f'Reinigt {selected_active["name"]}.' if raw_state == 'cleaning' and selected_active else localize_vacuum_state(raw_state)
+    title = f'Reinigt {selected_active["name"]}.' if cleaning and display_state == 'cleaning' and selected_active else localize_vacuum_state(display_state)
+    if completed:
+        subtitle = 'Reinigung abgeschlossen'
+        if display_state == 'cleaning':
+            title = 'Reinigung abgeschlossen'
     mode = attrs.get('cleaning_mode') if cleaning else None
     mode = {'Sweeping': 'Saugen', 'Mopping': 'Wischen', 'Sweeping and mopping': 'Saugen & Wischen', 'Mopping after sweeping': 'Wischen nach Saugen'}.get(mode, '')
+    if cleaning and dashboard_flag(attrs.get('cleangenius_cleaning')):
+        mode = 'CleanGenius'
+    if task_type in special_labels and cleaning:
+        mode = special_labels[task_type]
     if mode:
         subtitle = mode + ' · ' + subtitle
     external_job = cleaning and (observing or (diagnostics.get('job_status') == 'no_owned_job' and not active_room_label(summary)))
@@ -2728,7 +2799,7 @@ def build_live_dashboard_view(summary):
     name_parts = robot_name.split()
     if len(name_parts) == 2 and name_parts[0] == name_parts[1]:
         robot_name = name_parts[0]
-    return {'cleaning_permission': cleaning_permission, 'manual_order': bool(parse_dashboard_room_order(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'title': title, 'subtitle': subtitle, 'origin_label': 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': 'Bestätigung ausstehend' if pending_confirmation and not confirmed_home else f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Unterwegs' if near_home_unconfirmed else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'schedule_notice': schedule_notice, 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
+    return {'cleaning_permission': cleaning_permission, 'manual_order': bool(parse_dashboard_room_order(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'title': title, 'subtitle': subtitle, 'cleaning_mode': mode or None, 'progress_scope': progress_scope, 'progress_label': progress_label, 'room_progress': diagnostics.get('room_progress_percent'), 'origin_label': 'Manuell gestartet' if cleaning and dashboard_flag(status.get('active_room_manual')) else 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': 'Bestätigung ausstehend' if pending_confirmation and not confirmed_home else f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Unterwegs' if near_home_unconfirmed else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'schedule_notice': schedule_notice, 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
 
 
 def render_live_observation_dashboard(summary):
@@ -4944,7 +5015,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 if parsed.path == '/api/reset_room_order':
                     summary = build_summary()
-                    service_call('input_text','set_value',summary['entities']['global']['one_time_room_override'],{'value':''})
+                    manual = [q for q in parse_dashboard_queue(state_value(summary['states']['global'].get('one_time_room_override'), '')) if q['manual']]
+                    value = json.dumps(['!' + q['id'] for q in manual], separators=(',', ':')) if manual else ''
+                    service_call('input_text','set_value',summary['entities']['global']['one_time_room_override'],{'value':value})
                 else:
                     payload = json.loads(self.rfile.read(int(self.headers.get('Content-Length','0'))))
                     save_dashboard_room_move(payload.get('room_key'), payload.get('target'), payload.get('before'))

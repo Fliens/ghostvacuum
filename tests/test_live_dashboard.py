@@ -11,6 +11,88 @@ spec.loader.exec_module(dashboard)
 
 
 class LiveDashboard(unittest.TestCase):
+    def test_cleangenius_uses_confirmed_live_flag(self):
+        summary = self.summary()
+        vacuum = summary['states']['vacuum']
+        vacuum['state'] = 'cleaning'
+        vacuum['attributes'].update(cleaning_mode='Sweeping and mopping', cleangenius_cleaning=True)
+        self.assertTrue(dashboard.build_live_dashboard_view(summary)['robot']['subtitle'].startswith('CleanGenius ·'))
+        vacuum['attributes']['cleangenius_cleaning'] = False
+        self.assertTrue(dashboard.build_live_dashboard_view(summary)['robot']['subtitle'].startswith('Saugen & Wischen ·'))
+        vacuum['state'] = 'docked'
+        vacuum['attributes']['cleangenius_cleaning'] = True
+        self.assertNotIn('CleanGenius', dashboard.build_live_dashboard_view(summary)['robot']['subtitle'])
+
+    def test_live_summary_preserves_manual_origin_from_sensor(self):
+        from unittest.mock import patch
+        states = {'global': {}, 'sensors': {'status': {'attributes': {
+            'active_room': 'Küche', 'active_room_manual': True}}}}
+        with patch.object(dashboard, 'load_options', return_value={}), \
+             patch.object(dashboard, 'collect_states', return_value=states), \
+             patch.object(dashboard, 'state_for', return_value=None), \
+             patch.object(dashboard, 'all_states', return_value=[]):
+            summary = dashboard.build_summary()
+        self.assertEqual(summary['status']['active_room'], 'Küche')
+        self.assertIs(summary['status']['active_room_manual'], True)
+        summary['states']['vacuum'] = {'state': 'cleaning', 'attributes': {}}
+        self.assertEqual(dashboard.build_live_dashboard_view(summary)['robot']['origin_label'], 'Manuell gestartet')
+
+    def test_manually_queued_room_visible_even_when_not_due(self):
+        summary=self.summary()
+        summary['status']['observation_mode']=False
+        # Use the catalog supplied by this fixture, independent of due scoring.
+        initial=dashboard.build_live_dashboard_view(summary)
+        room_id=initial['rooms'][0]['id']
+        summary['states']['global']={'one_time_room_override':{'state':'["!'+room_id+'"]'}}
+        summary['states']['rooms']=[{'id':room_id,'enabled_state':{'state':'on'}}]
+        view=dashboard.build_live_dashboard_view(summary)
+        room=next(r for r in view['rooms'] if r['id']==room_id)
+        self.assertTrue(room['manual_queued'])
+        self.assertEqual(room['group'],'planned')
+
+    def test_remaining_time_never_uses_internal_minimum_plan_value(self):
+        summary=self.summary()
+        summary['states']['vacuum']['state']='cleaning'
+        summary['states']['sensors']['active_room']={'state':'Küche','attributes':{'remaining_min':1}}
+        self.assertIsNone(dashboard.build_live_dashboard_view(summary)['robot']['remaining'])
+        attrs=summary['states']['vacuum']['attributes']
+        attrs['remaining_time']=7
+        self.assertEqual(dashboard.build_live_dashboard_view(summary)['robot']['remaining'],7)
+        for value in (0,-1,float('nan'),float('inf'),'unknown'):
+            attrs['remaining_time']=value
+            self.assertIsNone(dashboard.build_live_dashboard_view(summary)['robot']['remaining'])
+
+    def test_special_progress_is_named_and_transition_value_is_hidden(self):
+        summary = self.summary()
+        summary['states']['vacuum'].update(state='cleaning')
+        summary['states']['vacuum']['attributes'].update(cleangenius_cleaning=True, cleaning_progress=95)
+        signals = {'task_type': {'state': 'stain_cleaning', 'last_changed': '2026-10-11T10:00:00+00:00'},
+                   'cleaning_progress': {'state': '80', 'last_changed': '2026-10-11T10:00:20+00:00'}}
+        summary['states']['robot'] = {'signals': signals}
+        robot = dashboard.build_live_dashboard_view(summary)['robot']
+        self.assertEqual(robot['progress_scope'], 'special')
+        self.assertEqual(robot['cleaning_mode'], 'Fleckenreinigung')
+        self.assertEqual(robot['progress'], 80)
+        signals['task_type'].update(state='smart', last_changed='2026-10-11T10:00:19+00:00')
+        self.assertIsNone(dashboard.build_live_dashboard_view(summary)['robot']['progress'])
+        signals['cleaning_progress'].update(state='42', last_changed='2026-10-11T10:00:40+00:00')
+        robot = dashboard.build_live_dashboard_view(summary)['robot']
+        self.assertEqual(robot['progress'], 42)
+        self.assertEqual(robot['cleaning_mode'], 'CleanGenius')
+        signals['cleaning_progress']['state'] = 'unavailable'
+        self.assertIsNone(dashboard.build_live_dashboard_view(summary)['robot']['progress'])
+
+    def test_station_cycle_never_looks_like_room_cleaning(self):
+        for state in ('returning', 'washing', 'drying'):
+            summary = self.summary()
+            summary['states']['vacuum'].update(state='cleaning')
+            summary['states']['vacuum']['attributes'].update(started=False, running=False)
+            summary['states']['robot'] = {'signals': {'state': {'state': state}, 'task_status': {'state': 'completed'}}}
+            robot = dashboard.build_live_dashboard_view(summary)['robot']
+            self.assertFalse(robot['cleaning'])
+            self.assertNotIn('Reinigt', robot['title'])
+            self.assertEqual(robot['subtitle'], 'Reinigung abgeschlossen')
+
     def summary(self):
         return {
             'status': {'observation_mode': 'on', 'anyone_home': 'off', 'everyone_away': 'on',
@@ -183,8 +265,9 @@ class LiveDashboard(unittest.TestCase):
         self.assertEqual(model['window'], 33)
         self.assertEqual(model['buffer_min'], 5)
         self.assertEqual(model['calculation'], 'Zeitfenster 38 min − Puffer 5 min = 33 min')
-        self.assertFalse(model['rooms'][0]['enabled'])
-        self.assertTrue(model['rooms'][1]['enabled'])
+        self.assertEqual([r['id'] for r in model['rooms']], ['room_2', 'room_1'])
+        self.assertTrue(model['rooms'][0]['enabled'])
+        self.assertFalse(model['rooms'][1]['enabled'])
         summary['status']['presence_summary'][0]['state'] = 'home'
         self.assertEqual(dashboard.build_live_dashboard_view(summary)['window'], 0)
 
