@@ -285,7 +285,7 @@ class LiveDashboard(unittest.TestCase):
 
     def test_due_badge_thresholds_and_unknown_history(self):
         now = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
-        for hours, level in [(0, 'neutral'), (24, 'neutral'), (24.01, 'warning'), (47.99, 'warning'), (48, 'danger'), (72, 'danger')]:
+        for hours, level in [(0, 'neutral'), (24, 'warning'), (24.01, 'warning'), (47.99, 'danger'), (48, 'danger'), (72, 'danger')]:
             badge = dashboard.room_due_badge((now - timedelta(hours=hours)).isoformat(), now)
             self.assertEqual(badge['level'], level)
         self.assertEqual(dashboard.room_due_badge(None, now), {'label':'Fällig', 'level':'neutral'})

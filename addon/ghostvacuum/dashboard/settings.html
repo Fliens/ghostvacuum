@@ -1670,7 +1670,9 @@
       const row = input.closest(".number-row");
       let value = Number(input.value);
       if (input.dataset.settingKey === "interval_days") {
-        value = Number(input.value) * 24;
+        value = Math.max(1, Math.ceil(Number(input.value)));
+        input.value = String(value);
+        value *= 24;
       } else if (input.type === "time") {
         value = Number(String(input.value || "0").split(":")[0]);
       }

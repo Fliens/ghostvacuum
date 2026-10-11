@@ -28,6 +28,7 @@ services:
     user: 1000:1000
     volumes:
     - /home/simon/ghostvacuum-observer:/conf:ro
+    - /home/simon/ghostvacuum-observer/storage/dashboard:/conf/storage/dashboard
     environment:
     - VACUUM_DASHBOARD_OPTIONS=/conf/options.yaml
     - VACUUM_DASHBOARD_API=http://172.27.30.30:8123/api

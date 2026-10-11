@@ -20,6 +20,7 @@ import json
 import math
 import time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 
 import appdaemon.plugins.hass.hassapi as hass
@@ -345,6 +346,7 @@ class VacuumAutomation(hass.Hass):
         )
 
         self.last_cleaned: Dict[str, datetime] = {}
+        self.rooms_suspended_today = {}
         self.travel_mode_active = False
         self.travel_mode_reason: Optional[str] = None
         self.left_pause_zone_time: Optional[datetime] = None
@@ -352,6 +354,8 @@ class VacuumAutomation(hass.Hass):
         self.cleaned_during_absence: List[str] = []
         self.active_room: Optional[str] = None
         self.active_room_manual = False
+        self.active_room_cleaning_profile = None
+        self._room_handoff = None
         self.active_room_started_at: Optional[datetime] = None
         self.active_room_planned_duration_min: Optional[int] = None
         self.active_room_configured_duration_min: Optional[int] = None
@@ -373,6 +377,7 @@ class VacuumAutomation(hass.Hass):
 
         self._load_history_storage()
         self._load_state()
+        self._restore_confirmed_cleaning_times()
 
         self.run_every(
             self._check_cleaning,
@@ -484,6 +489,7 @@ class VacuumAutomation(hass.Hass):
             data = json.loads(raw_state)
 
             if "lc" in data:
+                self.rooms_suspended_today = data.get("rs", {}) if isinstance(data.get("rs", {}), dict) else {}
                 self.last_cleaned = {
                     room: self._ts_to_datetime(ts)
                     for room, ts in data.get("lc", {}).items()
@@ -495,6 +501,7 @@ class VacuumAutomation(hass.Hass):
                 self.cleaned_during_absence = list(data.get("ca", []))
                 self.active_room = data.get("ar")
                 self.active_room_manual = bool(data.get("am", False))
+                self.active_room_cleaning_profile = data.get("cp") if valid_cleaning_profile(data.get("cp")) else None
                 self.active_room_started_at = datetime.fromisoformat(data["ai"]) if data.get("ai") else self._ts_to_datetime(data.get("as"))
                 self.active_room_planned_duration_min = data.get("ap")
                 self.active_room_configured_duration_min = data.get("ac")
@@ -525,8 +532,26 @@ class VacuumAutomation(hass.Hass):
         except Exception as err:
             self.log(f"Fehler beim Laden des Zustands: {err}", level="WARNING")
 
+    def _restore_confirmed_cleaning_times(self):
+        # Planning must never move a confirmed completion backwards.
+        changed = False
+        for entry in getattr(self, "history_entries", []):
+            if not entry.get("counted_as_cleaned") or entry.get("room") not in self.rooms:
+                continue
+            try:
+                finished = datetime.fromisoformat(entry["finished_at"])
+                previous = self.last_cleaned.get(entry["room"])
+                if previous is None or finished > previous:
+                    self.last_cleaned[entry["room"]] = finished
+                    changed = True
+            except (KeyError, ValueError, TypeError):
+                continue
+        if changed:
+            self._save_state()
+
     def _restart_state_payload(self):
         return {
+            "rs": getattr(self, "rooms_suspended_today", {}),
             "lc": {room: self._datetime_to_ts(ts) for room, ts in self.last_cleaned.items()},
             "tm": self.travel_mode_active,
             "tr": self.travel_mode_reason,
@@ -535,6 +560,7 @@ class VacuumAutomation(hass.Hass):
             "ca": self.cleaned_during_absence,
             "ar": self.active_room,
             "am": getattr(self, "active_room_manual", False),
+            "cp": getattr(self, "active_room_cleaning_profile", None),
             "as": self._datetime_to_ts(self.active_room_started_at),
             "ai": self.active_room_started_at.isoformat() if self.active_room_started_at else None,
             "ap": self.active_room_planned_duration_min,
@@ -580,6 +606,8 @@ class VacuumAutomation(hass.Hass):
             return
         payload = self._restart_state_payload()
         self._save_job_checkpoint(payload)
+        # The full profile belongs in the atomic checkpoint, not the size-limited HA helper.
+        payload.pop("cp", None)
 
         try:
             self.call_service(
@@ -692,6 +720,9 @@ class VacuumAutomation(hass.Hass):
             state = self.get_state(entity, attribute="all") or {}
             if state.get("state") == option:
                 continue
+            # Never reconfigure a moving robot. A handoff requires matching readback.
+            if self._robot_snapshot()["phase"] != "docked":
+                return False
             if option not in state.get("attributes", {}).get("options", []):
                 self.log(f"Reinigungsoption derzeit nicht verfügbar: {suffix}",level="WARNING")
                 return False
@@ -775,7 +806,7 @@ class VacuumAutomation(hass.Hass):
     def _return_analysis(self, robot=None) -> dict:
         policy = self._return_policy(bool(self.active_room))
         blockers = self._robot_start_blockers(robot) if robot else []
-        due = any(self._room_enabled(room) and (self._calculate_score(room)[0] >= .8 or self._calculate_score(room)[1] >= 1)
+        due = any(self._room_enabled(room) and self._room_due_info(room)["is_due"]
                   for room in self.rooms)
         decision = "Würde zur Station fahren" if self.active_room and not policy["allowed"] else (
             "Würde weiterreinigen" if self.active_room else "Würde starten" if policy["allowed"] and due and not blockers else "Würde warten")
@@ -1661,39 +1692,51 @@ class VacuumAutomation(hass.Hass):
 
         return int(available)
 
-    def _calculate_score(self, room: str) -> Tuple[float, float, float]:
+    def _room_due_info(self, room):
+        """One calendar-day decision for selection, dashboard and analysis."""
         interval_h = self._room_interval_h(room)
-        last_clean = self.last_cleaned.get(room)
-        if last_clean:
-            hours_since = (self.datetime() - last_clean).total_seconds() / 3600
-        else:
-            hours_since = interval_h * 2
+        if not math.isfinite(interval_h) or interval_h <= 0:
+            return {"is_due": False, "next_due_date": None, "interval_days": None, "score": 0.0}
+        # Legacy fractional-day settings become whole days, never earlier than configured.
+        days = max(1, math.ceil(interval_h / 24))
+        berlin = ZoneInfo("Europe/Berlin")
+        now = self.datetime()
+        today = (now.astimezone(berlin) if now.tzinfo else now).date()
+        last = self.last_cleaned.get(room)
+        if last is None:
+            return {"is_due": True, "next_due_date": None, "interval_days": days, "score": 2.0}
+        last_date = (last.astimezone(berlin) if last.tzinfo else last).date()
+        due_date = last_date + timedelta(days=days)
+        score = max(0, (today - last_date).days) / days
+        return {"is_due": today >= due_date, "next_due_date": due_date.isoformat(),
+                "interval_days": days, "score": score}
 
-        score = hours_since / interval_h
-        forecast_buffer_h = (self._get_travel_time_minutes() + self.forecast_buffer_min) / 60
-        forecast_buffer_h = min(max(forecast_buffer_h * 0.25, 0.5), 2.0)
-        score_forecast = (hours_since + forecast_buffer_h) / interval_h
-        score_forecast_capped = min(score_forecast, 2.0)
-        return score, score_forecast, score_forecast_capped
+    def _calculate_score(self, room: str) -> Tuple[float, float, float]:
+        score = self._room_due_info(room)["score"]
+        # Keep legacy score fields compatible, with no forecast or early eligibility.
+        return score, score, min(score, 2.0)
 
     def _select_next_room(
         self, available_time: int, log_selection: bool = False
     ) -> Optional[str]:
         candidates = []
+        queued = set(self._dashboard_room_order())
 
         for room in self.rooms:
-            if not self._room_enabled(room):
+            if not self._room_enabled(room) or self._room_suspended_today(room):
                 continue
 
             duration = self._room_effective_duration_min(room)
             if available_time < self._current_return_buffer_min() + self._current_start_margin_min():
                 continue
 
-            score, score_forecast, score_capped = self._calculate_score(room)
-            if score < 0.8 and score_forecast < 1.0:
+            due_info = self._room_due_info(room)
+            score = score_forecast = due_info["score"]
+            score_capped = min(score, 2.0)
+            if room not in queued and not due_info["is_due"]:
                 continue
 
-            overdue = score_forecast >= 1.0
+            overdue = due_info["is_due"]
             priority = score_capped + (self._room_weight(room) - 1.0) * 0.2
             candidates.append(
                 {
@@ -1841,10 +1884,32 @@ class VacuumAutomation(hass.Hass):
             "progress_updated_at": timestamp(progress_state.get("last_changed")),
         }
 
+    def _room_handoff_allowed(self, snapshot, room=None):
+        # Short-lived authority from our own history-confirmed completion only.
+        # It is deliberately not persisted or inferred from arbitrary returns.
+        handoff = getattr(self, "_room_handoff", None)
+        if not handoff or self.args.get("observation_mode", False):
+            return False
+        now = self.datetime(aware=True).timestamp()
+        if not handoff["created_at"] <= now <= handoff["created_at"] + 30:
+            self._room_handoff = None
+            return False
+        if (snapshot["phase"] != "returning" or snapshot.get("fresh") is not True
+                or snapshot.get("error") != "no_error"
+                or snapshot["map_id"] != handoff["map_id"]
+                or snapshot["task_changed_at"] != handoff["finished_at"]
+                or snapshot["task_status"] != "completed"
+                or snapshot["started"] is not False or snapshot["running"] is not False
+                or snapshot["station_status"] != "idle"
+                or snapshot.get("active_segments") not in ([], [handoff["segment"]])):
+            return False
+        return room is None or (room != handoff["room"]
+                                and self._effective_cleaning_profile(room) == handoff["profile"])
+
     def _robot_start_blockers(self, snapshot=None, room=None) -> List[str]:
         snapshot = snapshot or self._robot_snapshot()
         blockers = []
-        if snapshot["phase"] != "docked":
+        if snapshot["phase"] != "docked" and not self._room_handoff_allowed(snapshot, room):
             blockers.append(f"robot_{snapshot['phase']}")
         if snapshot["task_status"] != "completed":
             blockers.append("task_not_finished")
@@ -1940,9 +2005,12 @@ class VacuumAutomation(hass.Hass):
     def _dashboard_room_order(self) -> list:
         return [q['room'] for q in self._dashboard_queue()]
 
+    def _room_suspended_today(self, room):
+        return getattr(self, "rooms_suspended_today", {}).get(room) == self.datetime().date().isoformat()
+
     def _queued_manual_room(self):
         return next((q['room'] for q in self._dashboard_queue()
-                     if q['manual'] and self._room_enabled(q['room'])), None)
+                     if q['manual'] and self._room_enabled(q['room']) and not self._room_suspended_today(q['room'])), None)
 
     def _one_time_room_override(self) -> Optional[str]:
         order = self._dashboard_room_order()
@@ -1964,21 +2032,51 @@ class VacuumAutomation(hass.Hass):
             self.log(f"Einmaligen Raum-Vorzug konnte nicht geloescht werden: {err}", level="WARNING")
 
     def _mark_room_due_state(self, room: str, due: bool):
-        interval_h = max(1, int(round(self._room_interval_h(room))))
-        self.last_cleaned[room] = (
-            self.datetime() - timedelta(hours=interval_h) if due else self.datetime()
-        )
+        # Legacy planning events edit the queue, never cleaning history.
+        queue = [('!' if q['manual'] else '') + q['room'] for q in self._dashboard_queue() if q['room'] != room]
+        if due:
+            queue.append(room)
+        suspended = dict(getattr(self, "rooms_suspended_today", {}))
+        if due:
+            suspended.pop(room, None)
+        else:
+            suspended[room] = self.datetime().date().isoformat()
+        self.rooms_suspended_today = suspended
         self._save_state()
+        if getattr(self, "one_time_room_override_entity", None):
+            self.call_service('input_text/set_value', entity_id=self.one_time_room_override_entity,
+                              value=json.dumps(queue, separators=(',', ':')) if queue else '')
         self._publish_dashboard_state("raum_override")
 
     def _on_dashboard_set_room_due(self, event_name, data, kwargs):
         if self.args.get("observation_mode", False):
+            return
+        if (data or {}).get("reset_plan"):
+            self.rooms_suspended_today = {}
+            self._save_state()
+            self._publish_dashboard_state("planung_zurueckgesetzt")
             return
         room = str((data or {}).get("room_key") or "").strip()
         due = bool((data or {}).get("due"))
         if room not in self.rooms:
             return
 
+        if "suspend_today" in (data or {}):
+            if room == self.active_room:
+                return  # Removing a plan never stops an active device job.
+            suspended = dict(getattr(self, "rooms_suspended_today", {}))
+            if data["suspend_today"]:
+                suspended[room] = self.datetime().date().isoformat()
+            else:
+                suspended.pop(room, None)
+            self.rooms_suspended_today = suspended
+            self._save_state()
+            if data["suspend_today"] and getattr(self, "one_time_room_override_entity", None):
+                remaining = [('!' if q['manual'] else '') + q['room'] for q in self._dashboard_queue() if q['room'] != room]
+                self.call_service('input_text/set_value', entity_id=self.one_time_room_override_entity,
+                                  value=json.dumps(remaining, separators=(',', ':')) if remaining else '')
+            self._publish_dashboard_state("planung_entfernt" if data["suspend_today"] else "planung_freigegeben")
+            return
         self._mark_room_due_state(room, due)
 
     def _can_start_manual_cleaning(self, room):
@@ -2019,8 +2117,16 @@ class VacuumAutomation(hass.Hass):
         profile = self._effective_cleaning_profile(room)
         if profile is None:
             return
+        # Refresh authority after selector readback, immediately before the request.
+        if not (self._can_start_manual_cleaning(room) if manual else self._can_start_cleaning()):
+            return
+        snapshot = self._robot_snapshot()
+        if self._robot_start_blockers(snapshot, room):
+            return
         segment_id = self.rooms[room]["segment_id"]
+        self._room_handoff = None  # Consume before checkpoint/command, including failures.
         self.active_room = room
+        self.active_room_cleaning_profile = dict(profile)
         self.active_room_manual = manual
         self.active_room_started_at = self.datetime()
         self.active_room_planned_duration_min = self._room_effective_duration_min(room)
@@ -2099,6 +2205,7 @@ class VacuumAutomation(hass.Hass):
             self.log(f"[SIMULATION] Raum erfolgreich gereinigt: {self._room_label(room)}")
 
         was_manual = getattr(self, "active_room_manual", False)
+        self.active_room_cleaning_profile = None
         self.active_room = None
         self.active_room_manual = False
         self.active_room_started_at = None
@@ -2352,7 +2459,9 @@ class VacuumAutomation(hass.Hass):
     def _build_room_queue(self, available_time: int) -> List[dict]:
         queue: List[dict] = []
         for room in self.rooms:
-            score, score_forecast, score_capped = self._calculate_score(room)
+            due_info = self._room_due_info(room)
+            score = score_forecast = due_info["score"]
+            score_capped = min(score, 2.0)
             priority = score_capped + (self._room_weight(room) - 1.0) * 0.2
             queue.append(
                 {
@@ -2360,6 +2469,7 @@ class VacuumAutomation(hass.Hass):
                     "room_key": room,
                     "segment_id": self.rooms[room]["segment_id"],
                     "enabled": self._room_enabled(room),
+                    "suspended_today": self._room_suspended_today(room),
                     "weight": round(self._room_weight(room), 2),
                     "interval_h": round(self._room_interval_h(room), 1),
                     "configured_duration_min": self._room_configured_duration_min(room),
@@ -2370,13 +2480,16 @@ class VacuumAutomation(hass.Hass):
                     "fits_now": available_time >= self._current_return_buffer_min() + self._current_start_margin_min(),
                     "score": round(score, 2),
                     "forecast_score": round(score_forecast, 2),
+                    "is_due": due_info["is_due"],
+                    "next_due_date": due_info["next_due_date"],
+                    "interval_days": due_info["interval_days"],
                     "priority": round(priority, 2),
                 }
             )
 
         queue.sort(
             key=lambda item: (
-                not (item["forecast_score"] >= 1.0),
+                not item["is_due"],
                 -item["priority"],
                 item["effective_duration_min"],
             )
@@ -2729,7 +2842,8 @@ class VacuumAutomation(hass.Hass):
             self._save_state()
             return
         previously_accepted = self._vacuum_job.accepted_at is not None
-        result = self._vacuum_job.observe(self._robot_snapshot(), self.datetime(aware=True).timestamp())
+        snapshot = self._robot_snapshot()
+        result = self._vacuum_job.observe(snapshot, self.datetime(aware=True).timestamp())
         if self._vacuum_job.problem:
             self._vacuum_job_problem = self._vacuum_job.problem
             self._save_state()
@@ -2753,6 +2867,17 @@ class VacuumAutomation(hass.Hass):
         elif not self.abort_requested:
             self._vacuum_job_problem = "job_incomplete"
         was_manual = getattr(self, "active_room_manual", False)
+        profile = getattr(self, "active_room_cleaning_profile", None)
+        self._room_handoff = None
+        if outcome == "completed" and valid_cleaning_profile(profile):
+            self._room_handoff = {
+                "room": room, "segment": self._vacuum_job.segment,
+                "map_id": self._vacuum_job.map_id,
+                "finished_at": self._vacuum_job.finished_at,
+                "created_at": self.datetime(aware=True).timestamp(),
+                "profile": dict(profile), "automatic": not was_manual,
+            }
+        self.active_room_cleaning_profile = None
         self.active_room = None
         self.active_room_manual = False
         self.active_room_started_at = None
@@ -2770,6 +2895,10 @@ class VacuumAutomation(hass.Hass):
 
     def _on_vacuum_state_change(self, entity, attribute, old, new, kwargs):
         self._observe_active_job()
+        handoff = getattr(self, "_room_handoff", None)
+        if (not self.active_room and handoff and self._room_handoff_allowed(self._robot_snapshot())
+                and (self._queued_manual_room() or handoff["automatic"])):
+            self._check_cleaning({})
         self._publish_dashboard_state("staubsauger_update")
 
     def _check_cleaning(self, kwargs):

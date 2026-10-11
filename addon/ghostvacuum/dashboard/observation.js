@@ -8,11 +8,25 @@
   const sourceIcons = new Set(['wifi','mobile']);
   const sourceLabels = {wifi:'Anwesenheit über WLAN',mobile:'Standort vom Handy (GPS)'};
   const labels = {home:'Zuhause',away:'Unterwegs',travel:'Auf Reisen',unknown:'Status unbekannt'};
-  const dateLabel = value => {
+  const dateLabel = (value, dateOnly = false) => {
     if (!value) return 'Nicht verfügbar';
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? 'Nicht verfügbar' : date.toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Berlin'});
+    if (Number.isNaN(date.getTime())) return 'Nicht verfügbar';
+    const label = date.toLocaleString('de-DE',{day:'2-digit',month:'2-digit',...(dateOnly ? {} : {hour:'2-digit',minute:'2-digit'}),timeZone:'Europe/Berlin'});
+    const weekday = date.toLocaleDateString('de-DE',{weekday:'short',timeZone:'Europe/Berlin'}).replace(/\.$/,'');
+    return dateOnly ? `${weekday}, ${label}` : label;
   };
+  function resetPlanPreview(model) {
+    const rooms = model.rooms.map(r => r.group === 'active' ? {...r} : {...r,
+      group:r.automatic_due?'planned':'rest', plan_override:false, manual_queued:false,
+      suspended_today:false, order_changed:false});
+    const groupRank = {active:0,planned:1,rest:2};
+    rooms.sort((a,b) => groupRank[a.group]-groupRank[b.group] ||
+      (a.group==='planned' ? (b.priority || 0)-(a.priority || 0) :
+       a.group==='rest' ? Number(b.enabled===true)-Number(a.enabled===true) : 0) ||
+      (a.default_rank ?? 0)-(b.default_rank ?? 0));
+    return {...model,rooms,manual_order:false,rest_manual_order:false};
+  }
   function journeyMarkup(p) {
     const j = p.journey;
     if (!j) return '';
@@ -31,7 +45,6 @@
     const robot = model.robot;
     const locked = model.commands_locked;
     const enabled = model.automation_enabled;
-    document.querySelector('.observation-label').textContent = locked ? 'Beobachtung · Automatik AUS · Gerätebefehle gesperrt' : `Automatik ${enabled ? 'AN' : 'AUS'} · Live-Betrieb`;
     $('schedule-notice').textContent = model.schedule_notice || '';
     $('schedule-notice').hidden = !model.schedule_notice;
     $('schedule-notice').title = 'Automatische Reinigungsstarts sind aktuell gesperrt.';
@@ -69,28 +82,44 @@
       const empty = group === 'active' ? robot.cleaning ? 'Reinigung gemeldet · aktueller Raum unbekannt' : 'Kein Raum in Reinigung' : group === 'planned' ? 'Keine Räume geplant' : 'Keine weiteren Räume';
       const rowByRoom = new Map();
       const rows = rooms.map(r => {
-        const detail = group === 'rest' ? `<span class="room-date"><small>Zuletzt gereinigt</small><span>${esc(dateLabel(r.last))}</span></span><span class="room-date"><small>Wieder fällig</small><span>${esc(dateLabel(r.next_due))}</span></span>` : group === 'active' ? esc(robot.cleaning ? [robot.cleaning_mode, numeric(robot.progress) ? robot.progress+' %' : null].filter(Boolean).join(' · ') : '') : `<span class="planned-details"><span class="planned-meta"><span class="due-pill ${esc(r.due_badge?.level || 'neutral')}">${esc(r.due_badge?.label || 'Fällig')}</span><span class="room-interval">${numeric(r.interval_h) && r.interval_h > 0 ? (r.interval_h === 24 ? 'Täglich' : r.interval_h < 24 ? 'Alle '+r.interval_h.toLocaleString('de-DE')+' Std.' : 'Alle '+(r.interval_h/24).toLocaleString('de-DE')+' Tage') : 'Intervall unbekannt'}</span></span><span class="room-date planned-last"><small>Zuletzt gereinigt</small><span>${esc(dateLabel(r.last))}</span></span></span>`;
-        const row = `<div class="board-row ${group === 'active' ? 'active' : ''} ${r.enabled === false ? 'inactive' : ''}" data-room="${esc(r.id)}" draggable="false" role="listitem"><span class="handle ${locked || r.enabled !== true ? 'locked-handle' : 'drag-handle'}" draggable="false" aria-label="${esc(r.name)} verschieben" title="Zum Verschieben ziehen">⠿</span><span class="rank">${group==='active'?'◉':group==='planned'?String(++rank).padStart(2,'0'):'·'}</span><strong>${esc(r.name)}${r.enabled === false ? '<small class="inactive-label">Deaktiviert</small>' : ''}</strong><span class="row-detail ${group==='rest'?'room-dates':''}">${detail}${group==='planned' && r.manual_queued ? `<button class="manual-queue-pill" data-clear-manual aria-label="${esc(r.name)} wieder automatisch planen" title="Wieder automatisch planen" ${locked?'disabled':''}>Manuell <span aria-hidden="true">×</span></button>` : ''}</span><span class="row-badge"><small>${group==='active' ? 'Restzeit' : 'Reinigungsdauer'}</small><span>${esc(group==='active' ? (numeric(robot.remaining) ? minute(robot.remaining) : 'Unbekannt') : numeric(r.duration) && r.duration > 0 ? 'ca. '+minute(r.duration) : 'Noch unbekannt')}</span></span><div class="room-actions" role="group" aria-label="Aktionen für ${esc(r.name)}">${group==='active' ? `<button ${locked?'disabled':''} data-room-action="stop" aria-label="${esc(r.name)} abbrechen" title="Reinigung abbrechen"><span class="im-icon im-stop" aria-hidden="true"></span><small>Stoppen</small></button>` : `<button ${locked || r.enabled!==true || (group==='planned' && r.manual_queued)?'disabled':''} data-room-action="manual" aria-pressed="${group==='planned' && Boolean(r.manual_queued)}" aria-label="${esc(r.name)} manuell vormerken" title="Manuell vormerken · unabhängig von Anwesenheit und Reinigungszeit"><span class="im-icon im-queue" aria-hidden="true"></span><small>Manuell</small></button><button ${locked || r.enabled!==true || (group==='planned' && !r.manual_queued)?'disabled':''} data-room-action="auto" aria-pressed="${group==='planned' && !r.manual_queued}" aria-label="${esc(r.name)} automatisch einplanen" title="Automatisch einplanen · Anwesenheit und Reinigungszeit beachten"><span class="im-icon im-queue" aria-hidden="true"></span><small>Automatisch</small></button><button ${locked || r.enabled!==true?'disabled':''} data-room-action="start" aria-label="${esc(r.name)} jetzt starten" title="Jetzt starten"><span class="im-icon im-start" aria-hidden="true"></span><small>Starten</small></button>`}</div></div>`;
+        const detail = group === 'rest' ? `<span class="room-date"><small>Zuletzt gereinigt</small><span>${esc(dateLabel(r.last))}</span></span><span class="room-date"><small>Wieder fällig</small><span>${esc(dateLabel(r.next_due, true))}</span></span>` : group === 'active' ? esc(robot.cleaning ? [robot.cleaning_mode, numeric(robot.progress) ? robot.progress+' %' : null].filter(Boolean).join(' · ') : '') : `<span class="planned-details"><span class="planned-meta"><span class="due-pill ${esc(r.due_badge?.level || 'neutral')}">${esc(r.due_badge?.label || 'Fällig')}</span><span class="room-interval">${numeric(r.interval_h) && r.interval_h > 0 ? (r.interval_h === 24 ? 'Täglich' : r.interval_h < 24 ? 'Alle '+r.interval_h.toLocaleString('de-DE')+' Std.' : 'Alle '+(r.interval_h/24).toLocaleString('de-DE')+' Tage') : 'Intervall unbekannt'}</span></span><span class="room-date planned-last"><small>Zuletzt gereinigt</small><span>${esc(dateLabel(r.last))}</span></span></span>`;
+        const queueAction = (mode, label) => {
+          const selected = group === 'planned' && (mode === 'manual' ? r.manual_queued : !r.manual_queued);
+          return `<button class="queue-action ${selected?'remove-plan-action':''}" data-queue-mode="${mode}" data-room-action="${selected?'remove':mode}" ${locked || r.enabled!==true?'disabled':''} aria-label="${esc(r.name)} ${selected?'aus Planung entfernen':mode==='manual'?'manuell vormerken':'automatisch einplanen'}" title="${selected?'Aus Planung entfernen · für heute aussetzen':label+' einplanen'}"><span class="${selected?'remove-plan-icon':'im-icon im-queue'}" aria-hidden="true">${selected?'×':''}</span><small>${selected?'Entfernen':label}</small></button>`;
+        };
+        const changes = [group==='planned' && r.plan_override ? (r.automatic_due?'Planung manuell angepasst':'Manuell vorgemerkt') : null, r.order_changed?'Reihenfolge geändert':null, r.suspended_today?'Heute ausgesetzt':null].filter(Boolean).join(' · ');
+        const row = `<div class="board-row ${group === 'active' ? 'active' : ''} ${r.enabled === false ? 'inactive' : ''}" data-room="${esc(r.id)}" draggable="false" role="listitem"><span class="handle ${locked || r.enabled !== true ? 'locked-handle' : 'drag-handle'}" draggable="false" aria-label="${esc(r.name)} verschieben" title="Zum Verschieben ziehen">⠿</span><span class="rank">${group==='active'?'◉':group==='planned'?String(++rank).padStart(2,'0'):'·'}</span><strong>${esc(r.name)}${changes?`<span class="room-change-dot ${r.suspended_today?'skipped':''}" role="img" aria-label="${esc(changes)}" title="${esc(changes)}"></span>`:''}${r.enabled === false ? '<small class="inactive-label">Deaktiviert</small>' : ''}</strong><span class="row-detail ${group==='rest'?'room-dates':''}">${detail}</span><span class="row-badge"><small>${group==='active' ? 'Restzeit' : 'Reinigungsdauer'}</small><span>${esc(group==='active' ? (numeric(robot.remaining) ? minute(robot.remaining) : 'Unbekannt') : numeric(r.duration) && r.duration > 0 ? 'ca. '+minute(r.duration) : 'Noch unbekannt')}</span></span><div class="room-actions" role="group" aria-label="Aktionen für ${esc(r.name)}">${group==='active' ? `<button ${locked?'disabled':''} data-room-action="stop" aria-label="${esc(r.name)} abbrechen" title="Reinigung abbrechen"><span class="im-icon im-stop" aria-hidden="true"></span><small>Stoppen</small></button>` : `${queueAction('manual','Manuell')}${queueAction('auto','Automatisch')}<button ${locked || r.enabled!==true?'disabled':''} data-room-action="start" aria-label="${esc(r.name)} jetzt starten" title="Jetzt starten"><span class="im-icon im-start" aria-hidden="true"></span><small>Starten</small></button>`}</div></div>`;
         rowByRoom.set(r.id,row);
         return row;
       }).join('');
-      const choices = group==='planned' ? `<div class="planned-drop-choices"><div data-drop-target="planned_manual"><b>Manuell</b><small>Ohne Anwesenheits- & Zeitregeln</small><div class="drop-list">${rooms.filter(r=>r.manual_queued).map(r=>rowByRoom.get(r.id)).join('') || '<div class="empty-slot">Hier vormerken</div>'}</div></div><div data-drop-target="planned_auto"><b>Automatisch</b><small>Anwesenheits- & Zeitregeln</small><div class="drop-list">${rooms.filter(r=>!r.manual_queued).map(r=>rowByRoom.get(r.id)).join('') || '<div class="empty-slot">Hier einplanen</div>'}</div></div></div>` : '';
-      return `<section class="board-group" data-group="${group}" aria-label="${title}"><div class="group-heading"><h3>${title}${group==='active'?'':group==='rest'?`<span class="room-count-enabled">${rooms.filter(r=>r.enabled===true).length} aktiv</span><span class="room-count-disabled">${rooms.filter(r=>r.enabled===false).length} deaktiviert</span>${rooms.some(r=>r.enabled==null)?`<span>${rooms.filter(r=>r.enabled==null).length} unbekannt</span>`:''}`:`<span>${rooms.length}</span>`}</h3><small>${hint}</small></div>${choices}<div class="drop-list main-drop-list" role="list">${rows || `<div class="empty-slot">${empty}</div>`}</div></section>`;
+      const plannedSections = group==='planned' ? [['manual','Manuell',true],['auto','Automatisch',false]].map(([mode,label,manual]) => {
+        const items = rooms.filter(r=>Boolean(r.manual_queued)===manual);
+        return `<section class="planned-subgroup" data-drop-target="planned_${mode}" aria-label="${label} geplant"><h4>${label}</h4><div class="drop-list" role="list">${items.map(r=>rowByRoom.get(r.id)).join('') || '<div class="plan-empty">Keine Räume</div>'}</div></section>`;
+      }).join('') : '';
+      return `<section class="board-group" data-group="${group}" aria-label="${title}"><div class="group-heading"><h3>${title}${group==='active'?'':group==='rest'?`<span class="room-count-enabled">${rooms.filter(r=>r.enabled===true).length} aktiv</span><span class="room-count-disabled">${rooms.filter(r=>r.enabled===false).length} deaktiviert</span>${rooms.some(r=>r.enabled==null)?`<span>${rooms.filter(r=>r.enabled==null).length} unbekannt</span>`:''}`:`<span>${rooms.length}</span>`}</h3><small class="${group==='rest' && model.rest_manual_order?'manual-order-hint':''}">${group==='rest' && model.rest_manual_order ? 'Reihenfolge manuell geändert' : hint}</small></div><div class="drop-list main-drop-list" role="list">${plannedSections || rows || `<div class="empty-slot">${empty}</div>`}</div></section>`;
     }).join('');
-    $('connection').textContent = 'Live · '+new Date(model.updated_at).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Europe/Berlin'});
-    $('connection').classList.remove('connection-error');
+    showConnection();
+  }
+  function showConnection(message = '', error = false) {
+    const status = $('connection');
+    status.textContent = message;
+    status.classList.toggle('connection-error', error);
+    status.parentElement.hidden = !message;
   }
   let commandPending = false;
+  let stateRevision = 0;
   async function command(path, payload = {}) {
     if (commandPending) return false;
     commandPending = true;
+    stateRevision++;
     try {
       const response = await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Befehl fehlgeschlagen');
-      $('connection').textContent = 'Anforderung gesendet · wartet auf Bestätigung';
+      if (result.dashboard) render(result.dashboard);
+      if (!result.dashboard) showConnection('Anforderung gesendet · wartet auf Bestätigung');
       return true;
-    } catch (error) { $('connection').textContent = error.message; return false; }
+    } catch (error) { showConnection(error.message, true); return false; }
     finally {commandPending = false;}
   }
   $('pause-cleaning').addEventListener('click',() => command('api/pause_cleaning'));
@@ -105,7 +134,7 @@
     if (!button || button.disabled) return;
     const action = button.dataset.roomAction;
     const room_key = button.closest('[data-room]').dataset.room;
-    const target = {start:'active',manual:'planned_manual',auto:'planned_auto'}[action];
+    const target = {start:'active',manual:'planned_manual',auto:'planned_auto',remove:'rest'}[action];
     const planned = currentModel.rooms.filter(r=>r.group==='planned');
     const index = planned.findIndex(r=>r.id===room_key);
     const payload = {room_key,target};
@@ -118,13 +147,26 @@
     board.querySelectorAll('.drop-over,.insert-before,.insert-after').forEach(e => e.classList.remove('drop-over','insert-before','insert-after'));
     dropTarget = null;
   }
+  function appendPlanDrop(source, target) {
+    if (!['planned','planned_manual','planned_auto'].includes(target)) return false;
+    return source?.group !== 'planned' ||
+      (target !== 'planned' && Boolean(source.manual_queued) !== (target === 'planned_manual'));
+  }
   function locateDrop(element, y) {
     clearDrop();
     const group = element?.closest('[data-drop-target]') || element?.closest('[data-group]');
     const target = group?.dataset.dropTarget || group?.dataset.group;
-    if (!group || !['active','planned','planned_manual','planned_auto'].includes(target)) return;
-    const rows = [...group.querySelectorAll('[data-room]')].filter(row => row.dataset.room !== draggedRoom);
-    const before = rows.find(row => y < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2);
+    if (!group || !['active','planned_manual','planned_auto','rest'].includes(target)) return;
+    const allRows = [...group.querySelectorAll('[data-room]')];
+    if (target === 'rest') {
+      const inactive = allRows.find(row => currentModel.rooms.find(r=>r.id===row.dataset.room)?.enabled !== true);
+      if (inactive && y >= inactive.getBoundingClientRect().top) return;
+    }
+    const rows = allRows.filter(row => row.dataset.room !== draggedRoom &&
+      (target !== 'rest' || currentModel.rooms.find(r=>r.id===row.dataset.room)?.enabled === true));
+    const source = currentModel.rooms.find(r=>r.id===draggedRoom);
+    const append = appendPlanDrop(source, target) || (target === 'rest' && source?.group !== 'rest');
+    const before = append ? null : rows.find(row => y < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2);
     dropTarget = {room_key:draggedRoom, target, before:before?.dataset.room || null};
     group.querySelector('.drop-list').classList.add('drop-over');
     if (target !== 'active' && before) before.classList.add('insert-before');
@@ -193,17 +235,25 @@
   });
   board.addEventListener('pointercancel', () => {touchPointer=null;draggedRoom=null;board.classList.remove('choosing-plan');clearDrop();});
   $('reset-order').addEventListener('click', async () => {
-    if (await command('api/reset_room_order')) await refresh(true);
+    if (commandPending || !currentModel) return;
+    const previous = currentModel;
+    render(resetPlanPreview(previous));
+    if (!await command('api/reset_room_order')) {
+      const error = $('connection').textContent;
+      render(previous);
+      showConnection(error, true);
+    }
   });
   render(JSON.parse($('live-initial').textContent));
   async function refresh(once = false) {
+    const revision = stateRevision;
     try {
       const response = await fetch('api/dashboard',{cache:'no-store',signal:AbortSignal.timeout(12000)});
       if (!response.ok) throw new Error('Verbindung fehlgeschlagen');
-      render(await response.json());
+      const model = await response.json();
+      if (revision === stateRevision && !commandPending && !draggedRoom) render(model);
     } catch {
-      $('connection').textContent = 'Verbindung unterbrochen · letzte Daten angezeigt';
-      $('connection').classList.add('connection-error');
+      showConnection('Verbindung unterbrochen · letzte Daten angezeigt', true);
     } finally {
       if (!once) setTimeout(refresh,10000);
     }

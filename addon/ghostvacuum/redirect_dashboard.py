@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 import html
 import re
@@ -1331,12 +1333,8 @@ def travel_reason_label(reason: Any) -> str:
 
 
 def room_due_text(room: dict) -> str:
-    forecast = number_value(room.get("forecast_score"), 0) or 0
-    score = number_value(room.get("score"), 0) or 0
-    if forecast >= 1:
+    if room.get("is_due") is True:
         return "heute dran"
-    if score >= 0.8:
-        return "bald dran"
     return "noch nicht fällig"
 
 
@@ -1988,10 +1986,10 @@ def render_room_sections(summary: dict) -> str:
     queue = visible_room_queue(summary)
     ordered = ordered_room_queue(summary, queue) if queue else []
     due_rooms = [
-        room for room in ordered if (number_value(room.get("forecast_score"), 0) or 0) >= 1
+        room for room in ordered if room.get("is_due") is True
     ]
     later_rooms = [
-        room for room in ordered if (number_value(room.get("forecast_score"), 0) or 0) < 1
+        room for room in ordered if room.get("is_due") is not True
     ]
 
     sections = ['<div class="room-section" data-room-section-kind="active">In Reinigung</div>', render_active_room_row(summary)]
@@ -2018,7 +2016,7 @@ def rooms_fit_summary(summary: dict) -> str:
     due_today = [
         room
         for room in queue
-        if (number_value(room.get("forecast_score"), 0) or 0) >= 1
+        if room.get("is_due") is True
         and bool(room.get("enabled", True))
     ]
     fitting = [room for room in due_today if room.get("fits_now")]
@@ -2069,6 +2067,80 @@ def save_dashboard_room_move(room_key, target, before=None):
     with ROOM_ORDER_LOCK:
         return _save_dashboard_room_move(room_key, target, before)
 
+DASHBOARD_ORDER_PATH = Path(__file__).parent.parent / "storage" / "dashboard" / "order.json"
+
+def load_dashboard_rest_order():
+    try:
+        data = json.loads(DASHBOARD_ORDER_PATH.read_text())
+        return [key for key in data if isinstance(key, str)] if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+def save_dashboard_rest_order(order):
+    DASHBOARD_ORDER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp = DASHBOARD_ORDER_PATH.with_suffix('.tmp')
+    temp.write_text(json.dumps(order))
+    temp.replace(DASHBOARD_ORDER_PATH)
+
+def load_dashboard_plan_changes():
+    path = DASHBOARD_ORDER_PATH.with_name('plan_changes.json')
+    try:
+        data = json.loads(path.read_text())
+        return {key for key in data if isinstance(key, str)} if isinstance(data, list) else set()
+    except (OSError, ValueError):
+        return set()
+
+
+def save_dashboard_plan_changes(changes):
+    path = DASHBOARD_ORDER_PATH.with_name('plan_changes.json')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix('.tmp')
+    temp.write_text(json.dumps(sorted(changes)))
+    temp.replace(path)
+
+
+def reset_dashboard_plan_model(model):
+    """Project the acknowledged reset immediately, independent of HA event latency."""
+    if 'rooms' not in model:
+        return model
+    rooms = []
+    for original in model['rooms']:
+        room = dict(original)
+        if room['group'] != 'active':
+            room.update(group='planned' if room.get('automatic_due') else 'rest',
+                        plan_override=False, manual_queued=False, suspended_today=False,
+                        order_changed=False)
+        rooms.append(room)
+    groups = {'active':0, 'planned':1, 'rest':2}
+    rooms.sort(key=lambda r:(groups[r['group']],
+                            -(r.get('priority') or 0) if r['group']=='planned'
+                            else -int(r.get('enabled') is True) if r['group']=='rest' else 0,
+                            r.get('default_rank',0)))
+    return {**model, 'rooms':rooms, 'manual_order':False, 'rest_manual_order':False}
+
+
+def reset_dashboard_plan():
+    with ROOM_ORDER_LOCK:
+        summary = build_summary()
+        if load_options().get('observation_mode', False):
+            raise ValueError('Gerätebefehle sind gesperrt.')
+        model = build_live_dashboard_view(summary)
+        previous_order = load_dashboard_rest_order()
+        previous_changes = load_dashboard_plan_changes()
+        # Verify local persistence before changing any HA planning state.
+        save_dashboard_rest_order([])
+        save_dashboard_plan_changes(set())
+        try:
+            service_call('input_text', 'set_value', summary['entities']['global']['one_time_room_override'], {'value':''})
+            fire_event(EVENT_SET_ROOM_DUE, {'reset_plan':True})
+        except Exception:
+            save_dashboard_rest_order(previous_order)
+            save_dashboard_plan_changes(previous_changes)
+            raise
+        _all_states_cache['states'] = None
+        _all_states_cache['timestamp'] = 0
+        return reset_dashboard_plan_model(model)
+
 def _save_dashboard_room_move(room_key, target, before=None):
     if not isinstance(room_key, str) or not isinstance(target, str) or (before is not None and not isinstance(before, str)):
         raise ValueError("Ungültiger Raum.")
@@ -2077,8 +2149,39 @@ def _save_dashboard_room_move(room_key, target, before=None):
     if model['commands_locked']:
         raise ValueError('Gerätebefehle müssen freigegeben sein.')
     room = next((r for r in model['rooms'] if r['id'] == room_key), None)
-    if not room or room['enabled'] is not True or target not in {'active','planned','planned_manual','planned_auto'}:
+    if not room or room['enabled'] is not True or target not in {'active','planned','planned_manual','planned_auto','rest'}:
         raise ValueError('Dieser Raum kann hier nicht abgelegt werden.')
+    if target == 'rest':
+        if room['group'] == 'rest':
+            rest = [r for r in model['rooms'] if r['group']=='rest' and r['id']!=room_key]
+            if before and any(r['id']==before and r['enabled'] is not True for r in rest):
+                raise ValueError('Aktive Räume können nur oberhalb der deaktivierten Räume einsortiert werden.')
+            order = [r['id'] for r in rest if r['enabled'] is True]
+            index = order.index(before) if before in order else len(order)
+            order.insert(index, room_key)
+            order.extend(r['id'] for r in rest if r['enabled'] is not True)
+            save_dashboard_rest_order(order)
+            return
+        if room['group'] != 'planned':
+            raise ValueError('Nur geplante Räume können aus der Planung entfernt werden.')
+        if room.get('automatic_due') is False:
+            # Removing an extra appointment restores the normal plan. There is
+            # no naturally due cleaning to suspend for the rest of today.
+            queued = parse_dashboard_queue(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))
+            remaining = [('!' if q['manual'] else '') + q['id'] for q in queued if q['id'] != room_key]
+            previous_changes = load_dashboard_plan_changes()
+            save_dashboard_plan_changes(previous_changes - {room_key})
+            try:
+                service_call('input_text', 'set_value', summary['entities']['global']['one_time_room_override'],
+                             {'value':json.dumps(remaining, separators=(',', ':')) if remaining else ''})
+            except Exception:
+                save_dashboard_plan_changes(previous_changes)
+                raise
+            return
+        fire_event(EVENT_SET_ROOM_DUE, {'room_key': room_key, 'suspend_today': True})
+        return
+    if room.get('suspended_today'):
+        fire_event(EVENT_SET_ROOM_DUE, {'room_key': room_key, 'suspend_today': False})
     active = next((r for r in model['rooms'] if r['group'] == 'active'), None)
     if target == 'active' and model['robot']['cleaning'] and active is None:
         raise ValueError('Der aktuell gereinigte Raum ist unbekannt.')
@@ -2100,11 +2203,18 @@ def _save_dashboard_room_move(room_key, target, before=None):
     value = json.dumps([('!' if key in manual else '') + key for key in order], separators=(',', ':'))
     if len(value) > 128:
         raise ValueError('Zu viele Räume für die manuelle Reihenfolge.')
-    for key in [room_key] + ([active['id']] if target == 'active' and active else []):
-        if next(r for r in model['rooms'] if r['id'] == key)['group'] != 'planned':
-            fire_event(EVENT_SET_ROOM_DUE, {'room_key':key, 'due':True})
     entity = summary['entities']['global']['one_time_room_override']
-    service_call('input_text','set_value',entity,{'value':value})
+    # The helper also contains untouched rooms as order anchors. Only the
+    # explicitly moved room receives a manual-change marker.
+    changes = {r['id'] for r in model['rooms'] if r.get('plan_override') and r['id'] in order}
+    changes.add(room_key)
+    previous_changes = load_dashboard_plan_changes()
+    save_dashboard_plan_changes(changes)
+    try:
+        service_call('input_text','set_value',entity,{'value':value})
+    except Exception:
+        save_dashboard_plan_changes(previous_changes)
+        raise
     stop = active and (target == 'active' or active['id'] == room_key)
     if stop:
         service_call('vacuum','return_to_base',load_options().get('vacuum_entity'))
@@ -2462,11 +2572,14 @@ def room_due_badge(next_due, now=None):
     due = parse_datetime(next_due)
     if due is None:
         return {"label": "Fällig", "level": "neutral"}
-    now = now or datetime.now(due.tzinfo)
-    overdue_days = max(0, (now - due).total_seconds() / 86400)
-    level = "danger" if overdue_days >= 2 else "warning" if overdue_days > 1 else "neutral"
-    days = int(overdue_days)
-    label = f"{days} {'Tag' if days == 1 else 'Tage'} überfällig" if overdue_days > 1 else "Heute fällig"
+    berlin = ZoneInfo("Europe/Berlin")
+    now = now or datetime.now(berlin)
+    today = (now.astimezone(berlin) if now.tzinfo else now).date()
+    due_date = (due.astimezone(berlin) if due.tzinfo else due).date()
+    days = (today - due_date).days
+    level = "danger" if days >= 2 else "warning" if days >= 1 else "neutral"
+    label = (f"{days} {'Tag' if days == 1 else 'Tage'} überfällig" if days > 0
+             else "Heute fällig" if days == 0 else "Noch nicht fällig")
     return {"label": label, "level": level}
 
 
@@ -2753,26 +2866,47 @@ def build_live_dashboard_view(summary):
         stats = room_stats_for(summary, {'room_key': key, 'room': name})
         is_active = cleaning and ((current_segment is not None and str(room.get('segment_id')) == str(current_segment)) or name == active_name)
         # Never infer a plan in observation mode, even if old helpers contain a queue.
-        due = not observing and enabled is not False and bool(item.get('enabled')) and (number_value(item.get('forecast_score'), 0) or 0) >= 1
+        due = not observing and not item.get('suspended_today') and enabled is not False and bool(item.get('enabled')) and item.get('is_due') is True
         last = stats.get('last_cleaned')
         interval = first_number(state_value(settings.get('interval_h_state'), ''), stats.get('interval_h'), item.get('interval_h'))
-        last_dt = parse_datetime(last)
-        next_due = None
-        if last_dt and interval is not None and math.isfinite(interval) and interval >= 0:
-            next_due = (last_dt + timedelta(hours=interval)).isoformat()
-        rooms.append({'id': key, 'name': name, 'enabled': enabled, 'group': 'active' if is_active else 'planned' if due else 'rest', 'last': last, 'next_due': next_due, 'interval_h': interval, 'due_badge': room_due_badge(next_due), 'duration': first_number(stats.get('learned_duration_min'), item.get('learned_duration_min')), 'plan_rank': queue.index(item) if item else len(queue), 'priority': number_value(item.get('priority'), 0) or 0})
+        # Use the automation's canonical decision/date, never reconstruct an hourly forecast.
+        next_due = item.get('next_due_date')
+        if item.get('interval_days') is not None:
+            interval = item['interval_days'] * 24
+        rooms.append({'id': key, 'name': name, 'enabled': enabled, 'suspended_today': bool(item.get('suspended_today')) and item.get('is_due') is not False, 'automatic_due': not observing and enabled is True and bool(item.get('enabled')) and item.get('is_due') is True, 'default_rank': len(rooms), 'group': 'active' if is_active else 'planned' if due else 'rest', 'last': last, 'next_due': next_due, 'interval_h': interval, 'due_badge': room_due_badge(next_due), 'duration': first_number(stats.get('learned_duration_min'), item.get('learned_duration_min')), 'plan_rank': queue.index(item) if item else len(queue), 'priority': number_value(item.get('priority'), 0) or 0})
     # A device can report multiple selected segments; the current segment alone is active.
     selected_active = next((r for r in rooms if r['group'] == 'active'), None)
     for room in rooms:
         if room['group'] == 'active' and room is not selected_active:
             room['group'] = 'rest'
     room_order = parse_dashboard_queue(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))
+    plan_changes = load_dashboard_plan_changes()
     for room in rooms:
+        queued = next((q for q in room_order if q['id'] == room['id']), None)
+        room['plan_override'] = queued is not None and (queued['manual'] or not room['automatic_due'] or room['id'] in plan_changes)
         room['manual_queued'] = any(q['id'] == room['id'] and q['manual'] for q in room_order)
-        if room['enabled'] is True and room['group'] != 'active' and any(q['id'] == room['id'] for q in room_order):
+        if room['enabled'] is True and not room['suspended_today'] and room['group'] != 'active' and any(q['id'] == room['id'] for q in room_order):
             room['group'] = 'planned'
             room['plan_rank'] = next(i for i,q in enumerate(room_order) if q['id'] == room['id'])
     rooms.sort(key=lambda r: (0 if r['group'] == 'active' else 1 if r['group'] == 'planned' else 2, r['plan_rank'] if r['group'] == 'planned' else (0 if r['enabled'] is True else 1 if r['enabled'] is None else 2) if r['group'] == 'rest' else 0))
+    # Mark the current difference, not the fact that a room was dragged earlier.
+    automatic_plan = [r for r in rooms if r['group']=='planned' and not r['manual_queued']]
+    baseline_plan = sorted(automatic_plan, key=lambda r:(not r['automatic_due'], -r['priority'], r['default_rank']))
+    baseline_positions = {r['id']:i for i,r in enumerate(baseline_plan)}
+    for index, room in enumerate(automatic_plan):
+        if room['automatic_due']:
+            room['plan_override'] = room['id'] in plan_changes and index != baseline_positions[room['id']]
+    rest_order = load_dashboard_rest_order()
+    baseline_rest = [r['id'] for r in rooms if r['group']=='rest']
+    if rest_order:
+        rooms.sort(key=lambda r: (0 if r['group']=='active' else 1 if r['group']=='planned' else 2,
+                                  r['plan_rank'] if r['group']=='planned' else
+                                  (0 if r['enabled'] is True else 1, rest_order.index(r['id']) if r['id'] in rest_order else len(rest_order)) if r['group']=='rest' else 0))
+
+    sorted_rest = [r['id'] for r in rooms if r['group']=='rest']
+    for room in rooms:
+        room['order_changed'] = bool(rest_order) and room['group']=='rest' and baseline_rest.index(room['id']) != sorted_rest.index(room['id'])
+
     robot_metrics, station_metrics = build_hero_metrics(summary)
     battery = next((m['value'] for m in robot_metrics if m['label'] == 'Akku'), 'Nicht verfügbar')
     subtitle = {'docked': 'An der Station', 'cleaning': 'Reinigung läuft', 'paused': 'Reinigung pausiert', 'returning': 'Rückkehr zur Station'}.get(display_state, localize_vacuum_state(display_state))
@@ -2799,7 +2933,7 @@ def build_live_dashboard_view(summary):
     name_parts = robot_name.split()
     if len(name_parts) == 2 and name_parts[0] == name_parts[1]:
         robot_name = name_parts[0]
-    return {'cleaning_permission': cleaning_permission, 'manual_order': bool(parse_dashboard_room_order(state_value(summary.get('states', {}).get('global', {}).get('one_time_room_override'), ''))), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'title': title, 'subtitle': subtitle, 'cleaning_mode': mode or None, 'progress_scope': progress_scope, 'progress_label': progress_label, 'room_progress': diagnostics.get('room_progress_percent'), 'origin_label': 'Manuell gestartet' if cleaning and dashboard_flag(status.get('active_room_manual')) else 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': 'Bestätigung ausstehend' if pending_confirmation and not confirmed_home else f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Unterwegs' if near_home_unconfirmed else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'schedule_notice': schedule_notice, 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
+    return {'cleaning_permission': cleaning_permission, 'rest_manual_order': any(r.get('order_changed') for r in rooms), 'manual_order': any(r.get('order_changed') or r.get('suspended_today') or (r['group']=='planned' and r.get('plan_override')) for r in rooms if r['group']!='active'), 'observation': observing, 'commands_locked': observing, 'automation_enabled': bool_on(summary.get('states', {}).get('global', {}).get('enabled')), 'robot': {'name': robot_name, 'title': title, 'subtitle': subtitle, 'cleaning_mode': mode or None, 'progress_scope': progress_scope, 'progress_label': progress_label, 'room_progress': diagnostics.get('room_progress_percent'), 'origin_label': 'Manuell gestartet' if cleaning and dashboard_flag(status.get('active_room_manual')) else 'Manuell / extern gestartet' if external_job else None, 'cleaning': cleaning, 'progress': progress, 'remaining': remaining, 'active_name': selected_active['name'] if selected_active else None, 'battery': battery, 'metrics': robot_metrics + station_metrics}, 'people': people, 'presence_summary': 'Bestätigung ausstehend' if pending_confirmation and not confirmed_home else f'{sum(p["kind"] == "home" for p in people)} zuhause' if home else 'Unterwegs' if near_home_unconfirmed else 'Daten fehlen' if unknown else 'Reisemodus' if travel else 'Alle unterwegs', 'schedule_notice': schedule_notice, 'window': window, 'buffer_min': buffer, 'calculation': calculation, 'caption': caption, 'reason': reason, 'rooms': rooms, 'updated_at': datetime.now().astimezone().isoformat(), 'recent_runs': status.get('recent_runs') or []}
 
 
 def render_live_observation_dashboard(summary):
@@ -2824,7 +2958,7 @@ def render_dashboard_html() -> str:
     queue = visible_room_queue(summary)
     due_rooms = [
         room for room in queue
-        if (number_value(room.get("forecast_score"), 0) or 0) >= 1
+        if room.get("is_due") is True
         and bool(room.get("enabled", True))
     ]
     due_count = len(due_rooms)
@@ -3229,7 +3363,7 @@ def render_settings_rooms(summary: dict) -> str:
         enabled_class = "on" if enabled else ""
         room_class = "" if enabled else " inactive"
         interval_hours = number_value(state_value(room.get("interval_h_state"), ""), 0) or 0
-        interval_days = interval_hours / 24 if interval_hours else 0
+        interval_days = max(1, math.ceil(interval_hours / 24)) if interval_hours else 1
         meta = f"Segment {segment.get('segment_id')}"
         enabled_button = ""
         if room.get("enabled"):
@@ -3249,7 +3383,7 @@ def render_settings_rooms(summary: dict) -> str:
                     <strong>Intervall</strong>
                     <small>Reinigung alle</small>
                   </span>
-                  <input type="number" step="0.5" min="0.5" value="{escape(f"{interval_days:g}")}" data-number-entity="{escape(room.get("interval_h", ""))}" data-setting-key="interval_days">
+                  <input type="number" step="1" min="1" value="{escape(f"{interval_days:g}")}" data-number-entity="{escape(room.get("interval_h", ""))}" data-setting-key="interval_days">
                   <span class="room-interval-unit">Tage</span>
                 </label>
             """
@@ -5014,10 +5148,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path in {'/api/move_room', '/api/reset_room_order'}:
             try:
                 if parsed.path == '/api/reset_room_order':
-                    summary = build_summary()
-                    manual = [q for q in parse_dashboard_queue(state_value(summary['states']['global'].get('one_time_room_override'), '')) if q['manual']]
-                    value = json.dumps(['!' + q['id'] for q in manual], separators=(',', ':')) if manual else ''
-                    service_call('input_text','set_value',summary['entities']['global']['one_time_room_override'],{'value':value})
+                    model = reset_dashboard_plan()
+                    self._json_response({'ok':True, 'dashboard':model})
+                    return
                 else:
                     payload = json.loads(self.rfile.read(int(self.headers.get('Content-Length','0'))))
                     save_dashboard_room_move(payload.get('room_key'), payload.get('target'), payload.get('before'))
@@ -5025,7 +5158,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except (ValueError, TypeError) as error:
                 self._json_response({'ok':False,'error':str(error)},status=400)
             except Exception:
-                self._json_response({'ok':False,'error':'Raum konnte nicht verschoben werden.'},status=502)
+                logging.exception('Dashboard planning operation failed: %s', parsed.path)
+                message = 'Manuelle Änderungen konnten nicht zurückgesetzt werden.' if parsed.path == '/api/reset_room_order' else 'Raum konnte nicht verschoben werden.'
+                self._json_response({'ok':False,'error':message},status=502)
             return
         if parsed.path == "/api/start_room":
             self._handle_start_room()

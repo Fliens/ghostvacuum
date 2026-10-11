@@ -9,6 +9,7 @@ class CleaningProfiles(unittest.TestCase):
         self.a = module.VacuumAutomation()
         self.a.args = {'observation_mode':False}
         self.a.vacuum_entity = 'vacuum.willi'
+        self.a._robot_snapshot = lambda: {'phase':'docked'}
         self.a.cleaning_defaults_entity = 'input_text.defaults'
         self.a._room_helper_entity = lambda *args: 'input_text.room'
         self.profile = dict(module.CLEANING_PROFILE_DEFAULT)

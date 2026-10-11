@@ -22,7 +22,7 @@ class ReturnPolicy(unittest.TestCase):
         a._room_enabled = lambda r: True
         a._room_effective_duration_min = lambda r: 40
         a._room_weight = lambda r: 1
-        a._calculate_score = lambda r: (1,1,1)
+        a._room_due_info = lambda r: {"is_due":True,"score":1}
         a._one_time_room_override = lambda: None
         a._robot_start_blockers = lambda s=None: []
         a._presence_summary = lambda: self.people

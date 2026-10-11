@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    volumes: ['/home/simon/ghostvacuum-observer:/conf:ro']
+    volumes: ['/home/simon/ghostvacuum-observer:/conf:ro', '/home/simon/ghostvacuum-observer/storage/dashboard:/conf/storage/dashboard']
     ports: ['172.27.30.30:8099:8099']
     environment:
       VACUUM_DASHBOARD_OPTIONS: /conf/options.yaml

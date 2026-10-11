@@ -27,6 +27,13 @@ class JobRestart(unittest.TestCase):
         a._save_job_checkpoint=Mock(return_value=True)
         return a
 
+    def test_suspended_rooms_survive_restart(self):
+        self.state['rs']={'office':'2026-10-11'}
+        self.write()
+        a=self.restore()
+        self.assertEqual(a.rooms_suspended_today,{'office':'2026-10-11'})
+        self.assertEqual(a._restart_state_payload()['rs'],{'office':'2026-10-11'})
+
     def test_resume_confirmed_room_preserves_origin_progress_and_sends_no_commands(self):
         a=self.restore();a._observe_active_job()
         self.assertIsNone(a._vacuum_job_problem)

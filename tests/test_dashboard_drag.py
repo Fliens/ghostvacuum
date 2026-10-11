@@ -1,10 +1,15 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 from test_live_dashboard import dashboard
 from test_observation_mode import module
 
 class RoomDrag(unittest.TestCase):
     def setUp(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
+        storage=patch.object(dashboard,"DASHBOARD_ORDER_PATH",Path(temp.name)/"order.json")
+        storage.start();self.addCleanup(storage.stop)
         self.model={'commands_locked':False,'automation_enabled':True,'robot':{'cleaning':False},'rooms':[
             {'id':'a','group':'planned','enabled':True}, {'id':'b','group':'planned','enabled':True},
             {'id':'c','group':'rest','enabled':False}]}
@@ -21,11 +26,18 @@ class RoomDrag(unittest.TestCase):
         self.events.assert_not_called()
 
     def test_locked_disabled_and_bad_payload_rejected_without_writes(self):
-        for room,target in [('c','planned'),('a','rest'),([], 'active')]:
+        for room,target in [('c','planned'),('a','invalid'),([], 'active')]:
             with self.assertRaises(ValueError): dashboard.save_dashboard_room_move(room,target)
         self.model['commands_locked']=True
         with self.assertRaises(ValueError): dashboard.save_dashboard_room_move('a','active')
         self.services.assert_not_called(); self.events.assert_not_called()
+
+    def test_remove_plan_only_sends_suspension_event(self):
+        dashboard.save_dashboard_room_move('a','rest')
+        self.events.assert_called_once_with(dashboard.EVENT_SET_ROOM_DUE, {'room_key':'a','suspend_today':True})
+        self.services.assert_not_called()
+        self.model['rooms'][0]['group']='active'
+        with self.assertRaises(ValueError): dashboard.save_dashboard_room_move('a','rest')
 
     def test_replacement_retains_old_room_and_only_stops(self):
         self.model['rooms'][0]['group']='active';self.model['robot']['cleaning']=True
@@ -73,3 +85,13 @@ class RoomDrag(unittest.TestCase):
         app.get_state=lambda _: '["!a"]';app.call_service=unittest.mock.Mock()
         app._clear_one_time_room_override()
         app.call_service.assert_not_called()
+
+    def test_rest_append_stays_above_disabled_rooms(self):
+        self.model['rooms'][0]['group']='rest'
+        self.model['rooms'][1]['group']='rest'
+        dashboard.save_dashboard_room_move('a','rest')
+        self.assertEqual(dashboard.load_dashboard_rest_order(),['b','a','c'])
+        with self.assertRaises(ValueError):
+            dashboard.save_dashboard_room_move('a','rest','c')
+        self.assertEqual(dashboard.load_dashboard_rest_order(),['b','a','c'])
+        self.services.assert_not_called();self.events.assert_not_called()
