@@ -17,3 +17,10 @@ The official PNG previews were vectorized locally with VTracer because the origi
 - stop: https://iconmonstr.com/media-control-50-svg/
 - queue: https://iconmonstr.com/layer-20-svg/
 - automatic: https://iconmonstr.com/time-2-svg/
+
+The speed selector uses SVGs downloaded from iconmonstr (2026-10-12). The on-foot icon adapts the person silhouette to a walking pose with matching heavier limbs:
+
+- on foot (adapted): https://iconmonstr.com/accessibility-2-svg/
+- bicycle: https://iconmonstr.com/bicycle-5-svg/
+- public transport: https://iconmonstr.com/bus-1-svg/
+- car: https://iconmonstr.com/car-3-svg/

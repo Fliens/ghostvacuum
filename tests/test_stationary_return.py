@@ -18,6 +18,19 @@ class StationaryMotion(unittest.TestCase):
         self.position['attributes'].update(latitude=lat,gps_accuracy=accuracy)
         return self.app._person_motion('person.a',presence,distance,eta)
 
+    def test_configured_dwell_duration_and_changes_use_observed_time(self):
+        config = {"mode": "time", "buffer_m": 500, "margin_m": 500, "dwell_min": 3}
+        self.app._return_settings = lambda: config
+        self.report(0)
+        self.assertFalse(self.report(2)['stationary'])
+        self.assertTrue(self.report(3)['stationary'])
+        config['dwell_min'] = 15
+        self.assertFalse(self.report(4)['stationary'])
+        self.report(10)
+        self.assertTrue(self.report(15)['stationary'])
+        self.assertFalse(self.report(16, eta=5)['stationary'])
+        self.assertEqual(self.report(17)['stay_minutes'], 0)
+
     def test_gap_freezes_progress_and_same_spot_resumes_without_counting_gap(self):
         self.report(0)
         self.assertEqual(self.report(3)['stay_minutes'],3)
@@ -34,7 +47,7 @@ class StationaryMotion(unittest.TestCase):
         self.assertFalse(self.app._person_motion('person.a','away',.5,7)['stationary'])
         self.assertTrue(self.report(20)['stationary'])
         self.report(21,presence='unknown')
-        result=self.report(22,lat=52.004,distance=.4)
+        result=self.report(22,lat=51.997,distance=.4)
         self.assertEqual(result['stay_minutes'],0)
         self.assertEqual(result['motion'],'approaching')
 
@@ -59,11 +72,11 @@ class StationaryMotion(unittest.TestCase):
 
     def test_approach_stops_release_and_requires_new_dwell(self):
         self.report(0);self.assertTrue(self.report(10)['stationary'])
-        approaching=self.report(11,lat=52.004,distance=.4)
+        approaching=self.report(11,lat=51.997,distance=.4)
         self.assertFalse(approaching['stationary']);self.assertEqual(approaching['motion'],'approaching')
-        self.assertFalse(self.report(12,lat=52.0041,distance=.41)['stationary'])
-        self.assertFalse(self.report(20,lat=52.004,distance=.4)['stationary'])
-        self.assertTrue(self.report(21,lat=52.004,distance=.4)['stationary'])
+        self.assertFalse(self.report(12,lat=51.9971,distance=.41)['stationary'])
+        self.assertFalse(self.report(20,lat=51.997,distance=.4)['stationary'])
+        self.assertTrue(self.report(21,lat=51.997,distance=.4)['stationary'])
 
     def test_stale_poor_home_and_restart_never_keep_release(self):
         for failure in ['stale','poor','home','restart']:
@@ -83,19 +96,48 @@ class StationaryMotion(unittest.TestCase):
 
     def test_movement_away_keeps_monitoring_but_approach_latches_through_jitter(self):
         self.report(0); self.assertTrue(self.report(10)['stationary'])
-        away = self.report(11, lat=52.007, distance=.7)
+        away = self.report(11, lat=52.015, distance=.7)
         self.assertFalse(away['stationary'])
         self.assertTrue(away['monitored_absence'])
         self.assertEqual(away['motion'], 'observing')
-        approach = self.report(12, lat=52.006, distance=.6)
+        approach = self.report(12, lat=52.005, distance=.6)
         self.assertEqual(approach['motion'], 'approaching')
-        self.assertEqual(self.report(13, lat=52.0061, distance=.61)['motion'], 'approaching')
-        self.assertEqual(self.report(14, lat=52.008, distance=.8)['motion'], 'observing')
+        self.assertEqual(self.report(13, lat=52.0051, distance=.61)['motion'], 'approaching')
+        self.assertEqual(self.report(14, lat=52.018, distance=.8)['motion'], 'observing')
 
     def test_moving_without_previous_dwell_does_not_gain_permission(self):
         self.report(0)
         self.assertFalse(self.report(1, lat=52.007, distance=.7)['monitored_absence'])
 
+
+    def test_market_500_by_500_m_keeps_dwell_across_all_corners(self):
+        corners = [(52.005, 13), (52.00949, 13), (52.00949, 13.00730),
+                   (52.005, 13.00730), (52.007, 13.003)]
+        for minute, (lat, lon) in zip([0, 3, 6, 9, 10], corners):
+            self.position['attributes']['longitude'] = lon
+            result = self.report(minute, lat=lat, distance=2)
+        self.assertTrue(result['stationary'])
+        self.assertEqual(result['stay_minutes'], 10)
+        bounds = self.app._motion_observations['person.a']['bounds']
+        self.assertGreater(bounds[2] - bounds[0], .004)
+        # Wandering after confirmation remains valid inside the same footprint.
+        self.assertTrue(self.report(12, lat=52.005, distance=1.9)['stationary'])
+
+    def test_small_steps_cannot_move_area_unboundedly(self):
+        self.report(0)
+        for minute in range(1, 13):
+            result = self.report(minute, lat=52.005 + minute * .0009, distance=2)
+        self.assertFalse(result['stationary'])
+        self.assertLess(result['stay_minutes'], 10)
+
+    def test_bounded_area_resumes_after_gap_without_counting_missing_time(self):
+        self.report(0, distance=2)
+        self.report(3, lat=52.007, distance=2)
+        self.report(15, presence='unknown')
+        self.assertEqual(self.report(20, lat=52.009, distance=2)['stay_minutes'], 3)
+        self.assertTrue(self.report(27, lat=52.008, distance=2)['stationary'])
+        self.report(28, eta=5)
+        self.assertNotIn('person.a', self.app._motion_observations)
 
     def test_appdaemon_local_clock_accepts_fresh_reports(self):
         from zoneinfo import ZoneInfo

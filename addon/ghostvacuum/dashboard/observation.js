@@ -14,7 +14,12 @@
     if (Number.isNaN(date.getTime())) return 'Nicht verfügbar';
     const label = date.toLocaleString('de-DE',{day:'2-digit',month:'2-digit',...(dateOnly ? {} : {hour:'2-digit',minute:'2-digit'}),timeZone:'Europe/Berlin'});
     const weekday = date.toLocaleDateString('de-DE',{weekday:'short',timeZone:'Europe/Berlin'}).replace(/\.$/,'');
-    return dateOnly ? `${weekday}, ${label}` : label;
+    if (!dateOnly) return label;
+    const calendarDay = d => {
+      const parts = Object.fromEntries(new Intl.DateTimeFormat('en', {year:'numeric',month:'numeric',day:'numeric',timeZone:'Europe/Berlin'}).formatToParts(d).map(p => [p.type,p.value]));
+      return Date.UTC(Number(parts.year), Number(parts.month)-1, Number(parts.day)) / 86400000;
+    };
+    return `${calendarDay(date) === calendarDay(new Date()) + 1 ? 'Morgen' : weekday}, ${label}`;
   };
   function resetPlanPreview(model) {
     const rooms = model.rooms.map(r => r.group === 'active' ? {...r} : {...r,
@@ -35,7 +40,7 @@
     const dwellPercent = progress && progress.required > 0 ? Math.max(0, Math.min(100, progress.minutes / progress.required * 100)) : null;
     const dwellConfirmed = j.progress && progress.minutes >= progress.required;
     const detail = j.travel_progress ? j.note : dwellConfirmed || (progress && progress.minutes<=0) ? '' : progress ? `${progress.minutes} / ${progress.required} min` : j.note;
-    return `<div class="presence-scale ${esc(j.tone)}" aria-label="Aufenthaltsstatus von ${esc(p.name)}"><ol class="scale-stations">${j.steps.map((step,index)=>`<li class="scale-segment ${j.station!==null&&index<=j.station?'filled':''} ${j.station===index?'active':''} ${index===2&&j.station===2&&(!j.progress||j.progress.minutes<=0)?'awaiting-dwell':''} ${j.station===index&&dwellPercent!==null?'dwell-segment':''}" ${j.station===index?'aria-current="step"':''} ${j.station===index&&dwellPercent!==null?`style="--dwell:${dwellPercent}%"`:''} title="${esc(step.label)}${step.hint?' · '+esc(step.hint):''}"><span class="sr-only">${esc(step.label)}</span>${j.station===index&&dwellPercent!==null?`<span class="segment-progress" role="progressbar" aria-label="${j.travel_progress?'Zeit bis Reisemodus':'Aufenthalt'} von ${esc(p.name)}" aria-valuemin="0" aria-valuemax="${esc(progress.required)}" aria-valuenow="${esc(progress.minutes)}"></span>`:''}</li>`).join('')}</ol><div class="scale-detail ${progress?'has-dwell':''}"><span class="scale-current">${esc(j.approaching && (j.station===2 || j.station===3) ? 'Auf dem Heimweg' : dwellConfirmed ? 'Aufenthalt bestätigt' : active?.label || 'Standort unbekannt')}</span>${detail?`<span class="scale-note">${esc(detail)}</span>`:''}</div></div>`;
+    return `<div class="presence-scale ${esc(j.tone)}" aria-label="Verweilstatus von ${esc(p.name)}"><ol class="scale-stations">${j.steps.map((step,index)=>`<li class="scale-segment ${j.station!==null&&index<=j.station?'filled':''} ${j.station===index?'active':''} ${index===2&&j.station===2&&(!j.progress||j.progress.minutes<=0)?'awaiting-dwell':''} ${j.station===index&&dwellPercent!==null?'dwell-segment':''}" ${j.station===index?'aria-current="step"':''} ${j.station===index&&dwellPercent!==null?`style="--dwell:${dwellPercent}%"`:''} title="${esc(step.label)}${step.hint?' · '+esc(step.hint):''}"><span class="sr-only">${esc(step.label)}</span>${j.station===index&&dwellPercent!==null?`<span class="segment-progress" role="progressbar" aria-label="${j.travel_progress?'Zeit bis Reisemodus':'Verweilen'} von ${esc(p.name)}" aria-valuemin="0" aria-valuemax="${esc(progress.required)}" aria-valuenow="${esc(progress.minutes)}"></span>`:''}</li>`).join('')}</ol><div class="scale-detail ${progress?'has-dwell':''}"><span class="scale-current">${esc(dwellConfirmed ? 'Verweilen bestätigt' : active?.label || 'Standort unbekannt')}</span>${detail?`<span class="scale-note">${esc(detail)}</span>`:''}</div></div>`;
   }
   let currentModel = null;
   let draggedRoom = null;

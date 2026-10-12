@@ -38,7 +38,7 @@ class ObservationSettings(unittest.TestCase):
         self.assertTrue(choices['local']['available'])
         self.assertTrue(choices['waze']['available'])
         self.assertEqual(set(choices), {'local', 'waze'})
-        self.assertEqual(choices['local']['name'], 'Entfernungsschätzung')
+        self.assertEqual(choices['local']['name'], 'Standort')
         summary['options']['presence_entities'].append('person.b')
         self.assertFalse(d.tracking_choices(summary)[1]['available'])
         summary['tracking_sources']['waze']['state'] = 'unavailable'

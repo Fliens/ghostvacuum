@@ -67,7 +67,7 @@ options:
   check_interval_min: 30
   monitor_interval_min: 5
   return_buffer_min: 5
-  fallback_speed_kmh: 30
+  fallback_speed_kmh: 5
   default_travel_time_min: 60
   home_override_enabled: false
   home_latitude: 52.52

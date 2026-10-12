@@ -272,7 +272,7 @@ def default_options(raw_options: Dict[str, Any]) -> Dict[str, Any]:
         "check_interval_min": int(raw_options.get("check_interval_min", 30)),
         "monitor_interval_min": int(raw_options.get("monitor_interval_min", 5)),
         "return_buffer_min": int(raw_options.get("return_buffer_min", 5)),
-        "fallback_speed_kmh": float(raw_options.get("fallback_speed_kmh", 30)),
+        "fallback_speed_kmh": float(raw_options.get("fallback_speed_kmh", 5)),
         "default_travel_time_min": float(
             raw_options.get("default_travel_time_min", 60)
         ),

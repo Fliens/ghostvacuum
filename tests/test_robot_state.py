@@ -144,6 +144,38 @@ class JobCorrelation(unittest.TestCase):
         self.terminal()
         self.assertEqual(self.job.observe(self.data, self.now + 203), 'completed')
 
+    def test_area_is_read_only_from_the_correlated_terminal_history(self):
+        for value, expected in [('0 m²',0), ('0.0 m2',0), (0,0), ('7,5 m²',7.5), (None,None), ('unknown',None)]:
+            with self.subTest(value=value):
+                self.job=module.VacuumJobTracker(1,23,self.now,self.now-300)
+                self.accept();self.terminal()
+                self.data['history'][0]['cleaned_area']=value
+                self.assertEqual(self.job.observe(self.data,self.now+201),'completed')
+                self.assertEqual(self.job.cleaned_area_m2,expected)
+                restored=module.VacuumJobTracker.restore(self.job.checkpoint())
+                self.assertEqual(restored.cleaned_area_m2,expected)
+
+    def test_zero_area_can_be_enabled_or_disabled_and_never_overridden_by_percent(self):
+        for enabled in (True,False):
+            with self.subTest(enabled=enabled):
+                self.job=module.VacuumJobTracker(1,23,self.now,self.now-300)
+                self.accept();self.terminal()
+                self.data['history'][0]['cleaned_area']='0 m²'
+                self.job.room_progress_percent=100
+                app=self.make_app();app._return_settings=lambda:{'require_cleaned_area':enabled}
+                app._room_completion_percent=lambda room:80
+                app.last_cleaned={'office':NOW}
+                app._check_cleaning=Mock()
+                app._observe_active_job()
+                recorded=app._record_history_entry.call_args.args[1]
+                self.assertEqual(recorded,'aborted' if enabled else 'completed')
+                self.assertEqual(app.last_cleaned['office']==NOW,enabled)
+                self.assertEqual(bool(app.cleaned_during_absence),not enabled)
+                if enabled:
+                    self.assertEqual(app._vacuum_job_problem,'job_incomplete')
+                    app._check_cleaning.assert_not_called()
+                app.call_service.assert_not_called()
+
     def test_history_reports_incomplete_not_success(self):
         self.accept()
         self.terminal(False)

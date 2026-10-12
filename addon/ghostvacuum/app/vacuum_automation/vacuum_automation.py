@@ -18,6 +18,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 import json
 import math
+import re
 import time
 import uuid
 from pathlib import Path
@@ -97,13 +98,14 @@ class VacuumJobTracker:
         self.progress_task_type = None
         self.progress_schema = 2
         self.finished_at = None
+        self.cleaned_area_m2 = None
         self.request_id = None
 
     def checkpoint(self):
         return {key: getattr(self, key) for key in (
             "segment", "map_id", "requested_at", "baseline_history", "timeout",
             "accepted_at", "result", "problem", "room_progress_percent", "task_started_at",
-            "special_progress_percent", "progress_task_type", "progress_schema", "finished_at", "request_id")}
+            "special_progress_percent", "progress_task_type", "progress_schema", "finished_at", "request_id", "cleaned_area_m2")}
 
     @classmethod
     def restore(cls, data):
@@ -127,6 +129,10 @@ class VacuumJobTracker:
         special = data.get("special_progress_percent")
         if special is not None and not 0 <= special <= 100:
             raise ValueError("Invalid saved special progress")
+        area = data.get("cleaned_area_m2")
+        if area is not None and (not finite(area) or area < 0):
+            raise ValueError("Invalid saved cleaned area")
+        job.cleaned_area_m2 = area
         job.request_id = data.get("request_id") if isinstance(data.get("request_id"), str) else None
         job.finished_at = data.get("finished_at")
         job.special_progress_percent = special
@@ -202,6 +208,9 @@ class VacuumJobTracker:
                         and int(self.requested_at // 60) * 60 <= timestamp <= snapshot["task_changed_at"]):
                     completed = robot_bool(entry.get("completed"))
                     if completed is not None:
+                        area = entry.get("cleaned_area")
+                        match = re.fullmatch(r"\s*(\d+(?:[.,]\d+)?)\s*(?:m²|m2|m\^2|㎡)?\s*", str(area)) if not isinstance(area, bool) else None
+                        self.cleaned_area_m2 = float(match[1].replace(',', '.')) if match else None
                         self.finished_at = snapshot["task_changed_at"]
                         self.result = "completed" if completed else "aborted"
                         return self.result
@@ -279,7 +288,7 @@ class VacuumAutomation(hass.Hass):
         self.default_travel_time_min = float(
             self.args.get("default_travel_time_min", 60)
         )
-        self.fallback_speed_kmh = float(self.args.get("fallback_speed_kmh", 30))
+        self.fallback_speed_kmh = float(self.args.get("fallback_speed_kmh", 5))
         self.travel_pause_after_hours = float(
             self.args.get("travel_pause_after_hours", 24)
         )
@@ -775,7 +784,14 @@ class VacuumAutomation(hass.Hass):
             return False
         return True
 
+    def _zero_area_blocks_cleaning(self):
+        job = getattr(self, "_vacuum_job", None)
+        return (getattr(job, "cleaned_area_m2", None) == 0
+                and self._return_settings()["require_cleaned_area"])
+
     def _counts_as_cleaned(self, room, outcome, confirmed_room_percent=None):
+        if self._zero_area_blocks_cleaning():
+            return False
         if outcome == "completed":
             return True
         # No aggregate percentage, elapsed-time estimate or current_segment can
@@ -787,11 +803,37 @@ class VacuumAutomation(hass.Hass):
                 and math.isfinite(confirmed_room_percent)
                 and threshold <= confirmed_room_percent <= 100)
 
+    def _return_settings(self):
+        defaults = {"mode": "time", "buffer_m": 500, "margin_m": 500, "dwell_min": 10, "require_cleaned_area": True}
+        try:
+            data = json.loads((self.storage_dir / "dashboard" / "return_settings.json").read_text())
+            data = {**defaults, **data}
+            if not isinstance(data["require_cleaned_area"], bool):
+                return defaults
+            if isinstance(data["dwell_min"], bool) or not math.isfinite(float(data["dwell_min"])) or not 1 <= float(data["dwell_min"]) <= 120:
+                return defaults
+            if data.get("mode") not in {"time", "distance"}:
+                return defaults
+            for key in ("buffer_m", "margin_m"):
+                value = float(data[key])
+                if not math.isfinite(value) or not 1 <= value <= 100000:
+                    return defaults
+            return data
+        except (AttributeError, OSError, ValueError, TypeError, KeyError):
+            return defaults
+
     def _return_policy(self, running=False) -> dict:
         """Missing data blocks starts, but does not alone stop a running job."""
         people = self._presence_summary()
-        buffer = self._current_return_buffer_min()
-        margin = self._current_start_margin_min()
+        settings = self._return_settings()
+        distance_mode = settings["mode"] == "distance"
+        key = "distance_km" if distance_mode else "travel_time_min"
+        factor = 1000 if distance_mode else 1
+        # Work on copies: published ETA always remains minutes.
+        original_people = people
+        people = [{**p, "travel_time_min": p.get(key) * factor if p.get(key) is not None else None} for p in people]
+        buffer = float(settings["buffer_m"]) if distance_mode else self._current_return_buffer_min()
+        margin = float(settings["margin_m"]) if distance_mode else self._current_start_margin_min()
         eta = min((p["travel_time_min"] for p in people), default=None) if people and all(
             p["travel_time_min"] is not None for p in people) else None
         timed_people = [p for p in people if not p.get("stationary", False) and not (
@@ -804,7 +846,7 @@ class VacuumAutomation(hass.Hass):
         staying = any(p.get("stationary", False) for p in people)
         now = self.datetime()
         data_reason = "Standort unbekannt" if not people or any(p["presence"]=="unknown" for p in people) else (
-            "Heimwegzeit unbekannt oder veraltet" if eta is None else None)
+            "Entfernung unbekannt oder veraltet" if distance_mode and eta is None else "Heimwegzeit unbekannt oder veraltet" if eta is None else None)
         reason = None
         # Missing location only blocks new starts. Confirmed safety conditions
         # remain effective, including another resident's fresh return position.
@@ -818,23 +860,27 @@ class VacuumAutomation(hass.Hass):
             reason = "Heute keine Automatik"
         elif self.travel_mode_active:
             reason = "Reisemodus"
-        elif (now.replace(hour=self._current_end_hour(), minute=0, second=0, microsecond=0) - now).total_seconds() / 60 <= buffer:
+        elif (now.replace(hour=self._current_end_hour(), minute=0, second=0, microsecond=0) - now).total_seconds() / 60 <= self._current_return_buffer_min():
             reason = "Reinigungszeit endet"
         elif any(p["presence"] != "unknown" and p["travel_time_min"] is not None and p["travel_time_min"] <= buffer for p in people):
             reason = "Puffergrenze erreicht"
         elif data_reason and not running:
             reason = data_reason
-        elif not running and min(timed_eta if timed_eta is not None else float("inf"), (now.replace(hour=self._current_end_hour(), minute=0, second=0, microsecond=0) - now).total_seconds() / 60) < buffer + margin:
+        elif not running and not distance_mode and (now.replace(hour=self._current_end_hour(), minute=0, second=0, microsecond=0) - now).total_seconds() / 60 < buffer + margin:
+            reason = "Startabstand noch nicht erreicht"
+        elif not running and (timed_eta if timed_eta is not None else float("inf")) < buffer + margin:
             reason = "Startabstand noch nicht erreicht"
         continuing_without_location = running and data_reason is not None and reason is None
-        return {"allowed": reason is None, "reason": reason or (
+        actual_eta = min((p["travel_time_min"] for p in original_people), default=None) if original_people and all(p["travel_time_min"] is not None for p in original_people) else None
+        return {"mode": settings["mode"], "buffer_value": buffer, "margin_value": margin, "nearest_value": eta,
+                "allowed": reason is None, "reason": reason or (
                     "Standort fehlt · Reinigung läuft weiter" if continuing_without_location else
                     "Aufenthalt erkannt · Rückkehr wird überwacht" if staying else "Reinigung fortsetzen" if running else "Startgrenze erreicht"),
                 "location_missing": data_reason is not None,
                 "stationary_release": staying and reason is None and data_reason is None,
-                "all_stationary": bool(people) and all(p.get("stationary", False) for p in people), "timed_eta_min": timed_eta,
-                "stop_eta_min": stop_eta, "eta_min": eta, "buffer_min": buffer, "start_margin_min": margin,
-                "start_at_min": buffer + margin, "stop_at_min": buffer}
+                "all_stationary": bool(people) and all(p.get("stationary", False) for p in people), "timed_eta_min": timed_eta if not distance_mode else None,
+                "stop_eta_min": stop_eta if not distance_mode else None, "eta_min": actual_eta, "buffer_min": self._current_return_buffer_min(), "start_margin_min": self._current_start_margin_min(),
+                "start_at_min": self._current_return_buffer_min() + self._current_start_margin_min(), "stop_at_min": self._current_return_buffer_min()}
 
     def _load_return_analysis(self):
         self._return_samples = []
@@ -1231,7 +1277,7 @@ class VacuumAutomation(hass.Hass):
         if presence == "home":
             observations.pop(entity_id,None)
             return unknown
-        if presence != "away" or distance_km is None or travel_time_min is None:
+        if presence != "away" or distance_km is None or (travel_time_min is None and self._return_settings()["mode"] != "distance"):
             return pause()
         try:
             person = self.get_state(entity_id, attribute="all") or {}
@@ -1251,7 +1297,9 @@ class VacuumAutomation(hass.Hass):
                 raise ValueError("GPS inaccurate or stale")
         except (ValueError, TypeError, KeyError):
             return pause()
-        if travel_time_min <= self._current_return_buffer_min():
+        settings = self._return_settings()
+        in_buffer = distance_km * 1000 <= float(settings["buffer_m"]) if settings["mode"] == "distance" else travel_time_min <= self._current_return_buffer_min()
+        if in_buffer:
             observations.pop(entity_id, None)
             return {**unknown, "motion": "observing"}
         previous = observations.get(entity_id)
@@ -1260,23 +1308,33 @@ class VacuumAutomation(hass.Hass):
             return pause()
         if previous is None:
             previous = {"lat": lat, "lon": lon, "distance": distance_km,
-                        "since": timestamp, "last": timestamp, "approaching": False, "stationary": False, "monitored_absence": False, "paused": False}
+                        "since": timestamp, "last": timestamp, "approaching": False, "stationary": False, "monitored_absence": False, "paused": False,
+                        "bounds": [lat, lon, lat, lon]}
             observations[entity_id] = previous
         elif timestamp > previous["last"]:
-            displacement = self._haversine_km(previous["lat"], previous["lon"], lat, lon) * 1000
+            # A bounded moving centre: all fixes since the start must fit into
+            # a footprint whose diagonal is at most 750 m (a 500 x 500 m market).
+            # Never compare only successive fixes: that would follow any walk.
+            bounds = previous.get("bounds", [previous["lat"], previous["lon"], previous["lat"], previous["lon"]])
+            bounds = [min(bounds[0], lat), min(bounds[1], lon), max(bounds[2], lat), max(bounds[3], lon)]
+            footprint_m = self._haversine_km(bounds[0], bounds[1], bounds[2], bounds[3]) * 1000
             towards_home = (previous["distance"] - distance_km) * 1000 >= 75
             away_from_home = (distance_km - previous["distance"]) * 1000 >= 75
-            if displacement > 75 or towards_home:
-                previous.update(lat=lat, lon=lon, distance=distance_km, since=timestamp,
+            if footprint_m > 750:
+                previous.update(lat=lat, lon=lon, distance=distance_km, since=timestamp, bounds=[lat, lon, lat, lon],
                                 stationary=False, approaching=towards_home or (
                                     previous["approaching"] and not away_from_home))
             else:
+                previous["bounds"] = bounds
                 if previous.get("paused") or timestamp-previous["last"]>600:
                     previous["since"]+=timestamp-previous["last"]
-                if timestamp-previous["since"]>=600:
+                if timestamp-previous["since"]>=float(settings["dwell_min"])*60:
                     previous.update(stationary=True,approaching=False,monitored_absence=True)
             previous["last"] = timestamp
             previous["paused"] = False
+        previous["stationary"] = previous["last"] - previous["since"] >= float(settings["dwell_min"]) * 60
+        if previous["stationary"]:
+            previous.update(approaching=False, monitored_absence=True)
         return {"stationary": previous["stationary"],
                 "monitored_absence": previous["monitored_absence"],
                 "motion": "staying" if previous["stationary"] else "approaching" if previous["approaching"] else "observing",
@@ -1308,7 +1366,7 @@ class VacuumAutomation(hass.Hass):
             "near_home_unconfirmed": near_home,
             "presence_source": "router" if wifi_home else None,
             **motion,
-            "distance_km": round(distance_km, 1) if distance_km is not None else None,
+            "distance_km": distance_km if distance_km is not None else None,
             "travel_time_min": travel_time_min,
             "travel_time_source": "home" if self._is_home_like_state(state) else (
                 ("local_estimate" if mode == "local" else mode) if travel_time_min is not None else "unknown"),
@@ -1703,6 +1761,7 @@ class VacuumAutomation(hass.Hass):
         self._observe_active_job()
         self._ensure_presence_listeners()
         if not self.args.get("observation_mode", False):
+            self._send_return_notification()
             if self.active_room:
                 self._monitor_active_job({})
             else:
@@ -1732,6 +1791,9 @@ class VacuumAutomation(hass.Hass):
             microsecond=0,
         )
         time_until_end = max(0.0, (end_time - now).total_seconds() / 60)
+        if self._return_settings()["mode"] == "distance":
+            # Distance permission must not be gated by a hidden ETA assumption.
+            return int(time_until_end) if self._return_policy()["allowed"] else 0
         people = self._presence_summary()
         # A stationary release is monitored permission, not a predicted absence.
         if not people or any(p["presence"] != "away" or p["travel_time_min"] is None or
@@ -1788,7 +1850,7 @@ class VacuumAutomation(hass.Hass):
                 continue
 
             duration = self._room_effective_duration_min(room)
-            if available_time < self._current_return_buffer_min() + self._current_start_margin_min():
+            if available_time < (1 if self._return_settings()["mode"] == "distance" else self._current_return_buffer_min() + self._current_start_margin_min()):
                 continue
 
             due_info = self._room_due_info(room)
@@ -2352,6 +2414,7 @@ class VacuumAutomation(hass.Hass):
             "travel_time_min_at_start": self.active_room_travel_time_min,
             "distance_km_at_start": self.active_room_distance_km,
             "confirmed_progress_percent": self._vacuum_job.room_progress_percent if self._vacuum_job else None,
+            "cleaned_area_m2": getattr(self._vacuum_job, "cleaned_area_m2", None),
             "counted_as_cleaned": self._counts_as_cleaned(room, outcome, self._vacuum_job.room_progress_percent if self._vacuum_job else None),
         }
 
@@ -2396,7 +2459,101 @@ class VacuumAutomation(hass.Hass):
         self._save_state()
         self._publish_dashboard_state("abbruch")
 
+    def _notification_preferences(self):
+        try:
+            data = json.loads((self.storage_dir / 'dashboard' / 'notifications.json').read_text())
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def _save_return_report(self, report):
+        path = self.storage_dir / 'return_notification.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix('.tmp')
+        temp.write_text(json.dumps(report))
+        temp.replace(path)
+
+    def _person_push(self, service, title, message, person):
+        if self.args.get('observation_mode', False) or getattr(self, 'simulation_mode', False):
+            return False
+        if not isinstance(service, str) or not service.startswith('notify/mobile_app_'):
+            return False
+        try:
+            self.call_service(service, title=title, message=message,
+                              data={'url': self.dashboard_path, 'clickAction': self.dashboard_path} if self.dashboard_path else {})
+            self._audit_event('notification_requested', person=person, title=title)
+            return True
+        except Exception as error:
+            self.log(f'Push konnte nicht angefordert werden: {type(error).__name__}', level='WARNING')
+            self._audit_event('notification_failed', person=person, title=title)
+            return False
+
+    def _return_report_message(self):
+        rooms = list(dict.fromkeys(self.cleaned_during_absence))
+        labels = [self._room_label(room) for room in rooms]
+        minutes = 0
+        duration_complete = True
+        for room in rooms:
+            runs = [entry for entry in self.history_entries if entry.get('room') == room
+                    and entry.get('counted_as_cleaned', entry.get('outcome') == 'completed')]
+            recent = []
+            for entry in runs:
+                try:
+                    if self.away_since and datetime.fromisoformat(entry['finished_at']).timestamp() >= self.away_since.timestamp():
+                        recent.append(entry)
+                except (KeyError, ValueError, TypeError):
+                    continue
+            # Older checkpoints could restart the absence clock after the job.
+            # The cleaned-room list still identifies the actual completed room.
+            relevant = recent or runs[-1:]
+            for entry in relevant:
+                try:
+                    duration = float(entry.get('actual_duration_min', 0))
+                    if not math.isfinite(duration) or duration <= 0:
+                        raise ValueError('Missing measured duration')
+                    minutes += duration
+                except (ValueError, TypeError):
+                    duration_complete = False
+            if not relevant:
+                duration_complete = False
+        suffix = f' ({round(minutes)} min)' if duration_complete and minutes > 0 else ''
+        return 'Während deiner Abwesenheit gereinigt: ' + ', '.join(labels) + suffix
+
+    def _send_person_return_reports(self, prefs):
+        if not self._return_summary_enabled() or self.args.get('observation_mode', False) or getattr(self, 'simulation_mode', False):
+            return
+        selected = self._current_presence_entities()
+        home = [person for person in selected if self._is_home_like_state(self._presence_state(person))]
+        if not home:
+            return
+        try:
+            report = json.loads((self.storage_dir / 'return_notification.json').read_text())
+        except (OSError, ValueError):
+            report = {}
+        episode = self.away_since.isoformat() if self.away_since else None
+        if episode and self.cleaned_during_absence and report.get('episode') != episode:
+            report = {'episode': episode, 'message': self._return_report_message(),
+                      'eligible': selected, 'sent': [], 'closed': False}
+            self._save_return_report(report)
+        if not report or report.get('closed'):
+            return
+        first = prefs.get('return_delivery', 'first') != 'each'
+        for person in home:
+            config = prefs.get('people', {}).get(person, {})
+            if person not in report.get('eligible', []) or person in report.get('sent', []) or not config.get('enabled', bool(config.get('start') or config.get('return'))):
+                continue
+            if self._person_push(config.get('service'), 'GhostVacuum', report['message'], person):
+                report['sent'].append(person)
+                report['closed'] = first
+                self._save_return_report(report)
+                if first:
+                    break
+
     def _send_return_notification(self):
+        prefs = self._notification_preferences()
+        if prefs is not None:
+            self._send_person_return_reports(prefs)
+            return
         if (
             not self.cleaned_during_absence
             or not self.notify_service
@@ -2404,30 +2561,10 @@ class VacuumAutomation(hass.Hass):
         ):
             return
 
-        cleaned = []
-        total_minutes = 0
-        for room in self.cleaned_during_absence:
-            label = self._room_label(room)
-            if label not in cleaned:
-                cleaned.append(label)
-
-        for entry in self.history_entries:
-            if (
-                self.away_since
-                and entry.get("outcome") == "completed"
-                and entry.get("finished_at")
-                and datetime.fromisoformat(entry["finished_at"]) >= self.away_since
-            ):
-                total_minutes += int(entry.get("actual_duration_min", 0))
-
         self.call_service(
             self._normalize_service(self.notify_service),
-            title="Saugroboter-Bericht",
-            message=(
-                "Waehrend der Abwesenheit gereinigt: "
-                + ", ".join(cleaned)
-                + f" ({total_minutes} min)"
-            ),
+            title="GhostVacuum",
+            message=self._return_report_message(),
             data=(
                 {"clickAction": self.dashboard_path, "url": self.dashboard_path}
                 if self.dashboard_path
@@ -2436,6 +2573,15 @@ class VacuumAutomation(hass.Hass):
         )
 
     def _send_start_notification(self, room: str):
+        prefs = self._notification_preferences()
+        if prefs is not None:
+            if not self._start_notifications_enabled() or not self._is_everyone_away() or getattr(self, 'active_room_manual', False):
+                return
+            for person in self._current_presence_entities():
+                config = prefs.get('people', {}).get(person, {})
+                if config.get('enabled', bool(config.get('start') or config.get('return'))):
+                    self._person_push(config.get('service'), 'GhostVacuum startet', f'Reinigung von {self._room_label(room)} gestartet.', person)
+            return
         if (
             not self.notify_service
             or not self._start_notifications_enabled()
@@ -2566,7 +2712,7 @@ class VacuumAutomation(hass.Hass):
                     if room in self.learned_durations
                     else None,
                     "effective_duration_min": self._room_effective_duration_min(room),
-                    "fits_now": available_time >= self._current_return_buffer_min() + self._current_start_margin_min(),
+                    "fits_now": available_time >= (1 if self._return_settings()["mode"] == "distance" else self._current_return_buffer_min() + self._current_start_margin_min()),
                     "score": round(score, 2),
                     "forecast_score": round(score_forecast, 2),
                     "is_due": due_info["is_due"],
@@ -2629,8 +2775,10 @@ class VacuumAutomation(hass.Hass):
         if self._is_everyone_away():
             if self.away_since is None:
                 self.away_since = self.datetime()
-        else:
+        elif self.args.get("observation_mode", False) and self._is_anyone_home():
             self.away_since = None
+        # Live absence ends in the presence handler, after the return report.
+        # Unknown GPS/WLAN data must never reset its beginning.
         status = self._derive_status()
         available_time = self._calculate_available_time_minutes(log_context=False)
         travel_time = round(self._get_travel_time_minutes())
@@ -2705,7 +2853,7 @@ class VacuumAutomation(hass.Hass):
             ],
             "available_time_min": available_time,
             "travel_time_min": int(travel_time) if eta_known else None,
-            "distance_km": round(distance_km, 1) if distance_km is not None else None,
+            "distance_km": distance_km if distance_km is not None else None,
             "max_distance_km": round(self._current_max_distance_km(), 1),
             "travel_home_zone": custom_home_zone,
             "travel_home_zone_distance_km": round(custom_home_zone_distance_km, 1)
@@ -2837,6 +2985,9 @@ class VacuumAutomation(hass.Hass):
             self._publish_dashboard_state("anwesenheit")
             return
 
+        if self._notification_preferences() is not None:
+            self._send_return_notification()
+
         if old_state == new_state:
             if self.active_room:
                 self._monitor_active_job({})
@@ -2847,6 +2998,8 @@ class VacuumAutomation(hass.Hass):
         if self.away_since is None and self._is_everyone_away():
             self.away_since = self.datetime()
             self.cleaned_during_absence = []
+            if self._notification_preferences() is not None:
+                self._save_return_report({})
             self.log("Alle Bewohner sind weg - starte adaptive Reinigungslogik")
             self._save_state()
             self._publish_dashboard_state("abwesend")
@@ -2963,11 +3116,13 @@ class VacuumAutomation(hass.Hass):
 
     def _finish_observed_job(self, result):
         room = self.active_room
-        outcome = "aborted" if self.abort_requested or result == "aborted" else "completed"
+        zero_area = self._zero_area_blocks_cleaning()
+        outcome = "aborted" if self.abort_requested or result == "aborted" or zero_area else "completed"
         finished_at = datetime.fromtimestamp(self._vacuum_job.finished_at, tz=self.datetime(aware=True).tzinfo) if self._vacuum_job.finished_at else self.datetime()
         if self.datetime().tzinfo is None:
             finished_at = finished_at.replace(tzinfo=None)
         self._audit_event(outcome,room,confirmed_progress=self._vacuum_job.room_progress_percent,
+                          cleaned_area_m2=self._vacuum_job.cleaned_area_m2, reason="zero_cleaned_area" if zero_area else None,
                           finished_at=finished_at.isoformat())
         self._record_history_entry(room, outcome, finished_at=finished_at)
         if self._counts_as_cleaned(room, outcome, self._vacuum_job.room_progress_percent):

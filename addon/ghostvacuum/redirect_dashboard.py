@@ -550,7 +550,7 @@ def mock_states() -> dict[str, dict]:
         elif key == "return_buffer":
             value = options.get("return_buffer_min", 5)
         elif key == "fallback_speed":
-            value = options.get("fallback_speed_kmh", 30)
+            value = options.get("fallback_speed_kmh", 5)
         elif key == "default_travel_time":
             value = options.get("default_travel_time_min", 60)
         elif key == "home_latitude":
@@ -978,6 +978,78 @@ def save_person_wifi(person_entity, selected):
         asyncio.run(update())
 
 
+def load_notification_preferences():
+    try:
+        data = json.loads(DASHBOARD_ORDER_PATH.with_name('notifications.json').read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def mobile_push_services():
+    services = api_request('/services')
+    return sorted('notify/' + name for domain in services if domain.get('domain') == 'notify'
+                  for name in domain.get('services', {}) if name.startswith('mobile_app_'))
+
+
+def inferred_person_push(person, services):
+    trackers = set(person.get('device_trackers') or [])
+    if person.get('source'):
+        trackers.add(person['source'])
+    matches = [service for service in services if 'device_tracker.' + service.split('mobile_app_', 1)[1] in trackers]
+    return matches[0] if len(matches) == 1 else ''
+
+
+def save_notification_preferences(payload):
+    if not isinstance(payload, dict):
+        raise ValueError('Ungültige Push-Einstellung')
+    with PERSON_DEVICE_LOCK:
+        prefs = load_notification_preferences()
+        if 'return_delivery' in payload:
+            if payload['return_delivery'] not in {'first', 'each'}:
+                raise ValueError('Ungültige Rückkehrregel')
+            prefs['return_delivery'] = payload['return_delivery']
+        else:
+            person = payload.get('person')
+            people = {row.get('entity_id'): row for row in all_states() if str(row.get('entity_id', '')).startswith('person.')}
+            if person not in people:
+                raise ValueError('Person nicht gefunden')
+            services = mobile_push_services()
+            previous = prefs.get('people', {}).get(person, {})
+            inferred = inferred_person_push({'device_trackers': state_attrs(people[person]).get('device_trackers', [])}, services)
+            updated = {'service': previous.get('service', inferred),
+                       'enabled': previous.get('enabled', bool(previous.get('start') or previous.get('return')) or bool(payload.get('service') and (payload.get('start') or payload.get('return')))),
+                       'start': previous.get('start', True), 'return': previous.get('return', True)}
+            for key in ('enabled', 'start', 'return'):
+                if key in payload:
+                    if type(payload[key]) is not bool:
+                        raise ValueError('Ungültige Push-Auswahl')
+                    updated[key] = payload[key]
+            if 'service' in payload:
+                updated['service'] = payload['service']
+            service = updated['service']
+            if service and service not in services:
+                raise ValueError('Push-Handy ist nicht verfügbar')
+            if updated['enabled'] and not service:
+                raise ValueError('Kein Companion-App-Handy zugeordnet')
+            prefs.setdefault('people', {})[person] = updated
+        path = DASHBOARD_ORDER_PATH.with_name('notifications.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix('.tmp')
+        temp.write_text(json.dumps(prefs))
+        temp.replace(path)
+
+
+def render_person_push(person, prefs, services):
+    person_id = person.get('entity_id', '')
+    saved = prefs.get('people', {}).get(person_id, {})
+    service = saved.get('service') or inferred_person_push(person, services)
+    enabled = saved.get('enabled', bool(saved.get('start') or saved.get('return')))
+    return f'''<div class="person-push"><span>Push-Nachrichten</span><label class="switch" aria-label="{escape(person.get('name'))}: Push-Nachrichten">
+      <input type="checkbox" role="switch" data-person-push-enabled="{escape(person_id)}" {'checked' if enabled else ''} {'disabled' if not service else ''}>
+      <span aria-hidden="true"></span><em>{'Erlauben' if service else 'Kein Push-Handy'}</em></label></div>'''
+
+
 def render_person_wifi_picker(person, summary):
     clients = summary.get('wifi_presence_candidates', [])
     assigned = set(person.get('device_trackers', []))
@@ -1115,7 +1187,7 @@ def build_summary() -> dict:
         "options": {
             "dust_collection_type": options.get("dust_collection_type", "bag"),
             "water_connection": options.get("water_connection", False),
-            "fallback_speed_kmh": options.get("fallback_speed_kmh", 30),
+            "fallback_speed_kmh": options.get("fallback_speed_kmh", 5),
             "vacuum_entity": options.get("vacuum_entity"),
             "notify_service": options.get("notify_service"),
             "presence_entities": options.get("presence_entities"),
@@ -2140,7 +2212,8 @@ def render_job_events():
             'start_failed':'Start fehlgeschlagen','device_state':'Gerätestatus','abort_requested':'Abbruch angefordert',
             'aborted':'Abgebrochen','completed':'Abgeschlossen','tracking_blocked':'Auftragsverfolgung blockiert','planning_applied':'Planung übernommen',
             'planning_failed':'Planung fehlgeschlagen','service_started':'Dienst gestartet','location_gap':'Standort fehlt · Reinigung läuft weiter',
-            'location_restored':'Standort wieder verfügbar'}
+            'location_restored':'Standort wieder verfügbar','notification_requested':'Push angefordert',
+            'notification_failed':'Push fehlgeschlagen'}
     descriptions={'cleaning':'Reinigt','washing':'Mopwäsche','returning':'Rückkehr','docked':'Angedockt',
                   'drying':'Mop trocknet','dashboard':'Über Dashboard','command_failed':'Gerätebefehl fehlgeschlagen',
                   'robot_stale':'Gerätedaten veraltet','battery_low_or_unknown':'Akku zu niedrig oder unbekannt',
@@ -2675,12 +2748,20 @@ def dashboard_schedule_notice(summary, now=None):
     return None
 
 
+def format_home_distance(km):
+    return (f'{round(km * 1000)} m' if km < 1 else f'{km:.1f} km'.replace('.', ',')) + ' von zuhause'
+
+
 def person_journey_scale(person, view, buffer, policy, status, now=None):
     """Six display stations, derived from existing presence signals only."""
     import math
-    eta = person_travel_time(person)
+    dwell_min = load_return_settings()['dwell_min']
+    distance_mode = policy.get('mode') == 'distance'
+    eta = person_distance(person) * 1000 if distance_mode and person_distance(person) is not None else None if distance_mode else person_travel_time(person)
+    if distance_mode:
+        buffer = number_value(policy.get('buffer_value'))
     eta = eta if eta is not None and math.isfinite(eta) and eta >= 0 else None
-    margin = number_value(policy.get('start_margin_min'), 5)
+    margin = number_value(policy.get('margin_value') if distance_mode else policy.get('start_margin_min'), 5)
     margin = margin if margin is not None and math.isfinite(margin) and margin >= 0 else 5
     start = buffer + margin if buffer is not None else None
     radius = number_value(status.get('travel_pause_radius_km'))
@@ -2689,11 +2770,15 @@ def person_journey_scale(person, view, buffer, policy, status, now=None):
     steps = [
         {'label':'Zuhause', 'hint':'WLAN' if view.get('presence_source') == 'wifi' else ''},
         {'label':'Im Puffer', 'hint':f'≤ {buffer:g} min' if buffer is not None else ''},
-        {'label':'Aufenthalt nötig', 'hint':f'{buffer:g}–{start:g} min' if start is not None else ''},
+        {'label':'Verweilen nötig', 'hint':f'{buffer:g}–{start:g} min' if start is not None else ''},
         {'label':'Genug Abstand', 'hint':f'≥ {start:g} min' if start is not None else ''},
         {'label':'Außerhalb Reiseradius', 'hint':f'> {radius:g} km' if radius is not None and math.isfinite(radius) else ''},
         {'label':'Reisemodus', 'hint':f'nach {duration:g} h' if duration is not None else ''},
     ]
+    if distance_mode:
+        steps[1]['hint'] = f'≤ {buffer:g} m' if buffer is not None else ''
+        steps[2]['hint'] = f'{buffer:g}–{start:g} m' if start is not None else ''
+        steps[3]['hint'] = f'≥ {start:g} m' if start is not None else ''
     result = {'steps':steps, 'station':None, 'tone':'unknown', 'eta':None,
               'note':'', 'progress':None, 'approaching':False}
     if view['kind'] == 'home':
@@ -2702,7 +2787,7 @@ def person_journey_scale(person, view, buffer, policy, status, now=None):
     if view['kind'] == 'unknown' or eta is None or person.get('motion') == 'unknown' or buffer is None:
         result['note'] = 'Abwesenheit wird bestätigt' if view.get('detail') == 'Abwesenheit wird bestätigt' else 'Standortdaten fehlen oder veraltet'
         return result
-    result.update(eta=f'ca. {round(eta)} min bis zuhause', approaching=person.get('motion') == 'approaching')
+    result.update(eta=(format_home_distance(eta / 1000) if distance_mode else f'ca. {round(eta)} min bis zuhause'), approaching=person.get('motion') == 'approaching')
     if dashboard_flag(person.get('travel_mode_active')):
         result.update(station=5, tone='travel', note='Reisemodus aktiv')
     elif dashboard_flag(person.get('outside_radius')):
@@ -2724,7 +2809,7 @@ def person_journey_scale(person, view, buffer, policy, status, now=None):
     elif start is not None and eta < start:
         result.update(station=2, tone='ready' if person.get('stationary') else 'waiting')
         if person.get('stationary'):
-            result.update(note='Aufenthalt bestätigt', progress={'minutes':10,'required':10})
+            result.update(note='Verweilen bestätigt', progress={'minutes':dwell_min,'required':dwell_min})
         elif view.get('stay_progress'):
             result['progress'] = view['stay_progress']
     else:
@@ -2735,6 +2820,7 @@ def person_journey_scale(person, view, buffer, policy, status, now=None):
 def build_live_dashboard_view(summary):
     """Read-only, coordinate-free projection. Missing data is never sample data."""
     import math
+    dwell_min = load_return_settings()['dwell_min']
     status = summary.get('status', {})
     sensors = summary.get('states', {}).get('sensors', {})
     vacuum = summary.get('states', {}).get('vacuum') or {}
@@ -2779,13 +2865,13 @@ def build_live_dashboard_view(summary):
             countdown = f'Reisemodus in {remaining // 60} h {remaining % 60:02d} min' if remaining else 'Reisemodus wird geprüft'
         if not is_home and not is_unknown and not travelling and countdown is None:
             if person.get('stationary'):
-                countdown = 'Aufenthalt zählt'
+                countdown = 'Verweilen zählt'
             elif person.get('motion') == 'approaching':
                 countdown = 'Annäherung erkannt'
             elif person.get('motion') == 'observing':
                 observed_minutes = number_value(person.get('stay_minutes'), 0) or 0
-                remaining = max(0, math.ceil(10 - observed_minutes))
-                countdown = f'Aufenthalt · noch {remaining} min' if remaining else 'Wartet auf Standortmeldung'
+                remaining = max(0, math.ceil(dwell_min - observed_minutes))
+                countdown = f'Verweilen · noch {remaining} min' if remaining else 'Wartet auf Standortmeldung'
             elif person.get('motion') == 'unknown':
                 countdown = 'Wartet auf Standortmeldung'
         people.append({'name': person_name(person), 'presence_source': {'router':'wifi','gps':'mobile'}.get(person.get('presence_source') or person_sources.get(person.get('entity_id'))), 'kind': 'away' if near_home else 'unknown' if pending else 'home' if is_home else 'unknown' if is_unknown else 'travel' if travelling else 'away', 'detail': text, 'countdown': countdown})
@@ -2817,7 +2903,7 @@ def build_live_dashboard_view(summary):
     elif observing:
         reason = 'Zeitfenster geschätzt · Beobachtung, kein Start'
     elif dashboard_flag(status.get('return_policy', {}).get('stationary_release')):
-        caption, reason = 'Maximale Reinigungszeit', 'Aufenthalt erkannt · Stopp bei Annäherung im Puffer'
+        caption, reason = 'Maximale Reinigungszeit', 'Verweilen erkannt · Stopp bei Annäherung im Puffer'
     elif within_buffer:
         window, caption, reason = 0, 'Kein automatischer Start', 'Innerhalb des Puffers'
     # Each person gets one status, selected by the strongest applicable condition.
@@ -2837,11 +2923,25 @@ def build_live_dashboard_view(summary):
         elif valid_eta and buffer is not None and eta < buffer + (number_value(policy.get('start_margin_min'), 5) or 5) and not person.get('stationary') and not status.get('active_room'):
             if person.get('motion') == 'observing':
                 observed = number_value(person.get('stay_minutes'), 0) or 0
-                observed = max(0, min(10, observed)) if math.isfinite(observed) else 0
-                person_view['stay_progress'] = {'minutes': math.floor(observed), 'required': 10}
+                observed = max(0, min(dwell_min, observed)) if math.isfinite(observed) else 0
+                person_view['stay_progress'] = {'minutes': math.floor(observed), 'required': dwell_min}
             person_view['countdown'] = None
         else:
             # Return ETA is sufficient when no personal condition blocks a start.
+            person_view['countdown'] = None
+    if policy.get('mode') == 'distance':
+        distance_buffer = number_value(policy.get('buffer_value'), 500)
+        distance_margin = number_value(policy.get('margin_value'), 500)
+        for person_view, person in zip(people, status.get('presence_summary', [])):
+            person_view['stay_progress'] = None
+            km = person_distance(person)
+            if person_view['kind'] == 'away' and km is not None:
+                person_view['detail'] = format_home_distance(km)
+                if km * 1000 <= distance_buffer:
+                    person_view['detail'] = 'Im Puffer · ' + format_home_distance(km)
+                elif km * 1000 < distance_buffer + distance_margin and person.get('motion') == 'observing' and not person.get('stationary'):
+                    observed = number_value(person.get('stay_minutes'), 0) or 0
+                    person_view['stay_progress'] = {'minutes': max(0, min(dwell_min, math.floor(observed))), 'required': dwell_min}
             person_view['countdown'] = None
     for person_view, person in zip(people, status.get('presence_summary', [])):
         person_view['journey'] = person_journey_scale(person, person_view, buffer, policy, status)
@@ -2865,12 +2965,12 @@ def build_live_dashboard_view(summary):
         permission_ready = dashboard_flag(policy.get('allowed'))
         if permission_ready:
             permission_title = 'Reinigung freigegeben'
-            permission_reason = 'Aufenthalt bestätigt' if dashboard_flag(policy.get('stationary_release')) else 'Ausreichend Abstand'
+            permission_reason = 'Verweilen bestätigt' if dashboard_flag(policy.get('stationary_release')) else 'Ausreichend Abstand'
         else:
             permission_reason = policy.get('reason') or 'Freigabe wird geprüft'
             if permission_reason == 'Startabstand noch nicht erreicht':
                 permission_title = 'Automatik wartet'
-                permission_reason = 'Freigabe nach 10 Minuten Aufenthalt' if any(p.get('stay_progress') is not None for p in people) else 'Noch zu nah zuhause'
+                permission_reason = f'Freigabe nach {dwell_min:g} Minuten Verweilen' if any(p.get('stay_progress') is not None for p in people) else 'Noch zu nah zuhause'
             if permission_reason == 'Puffergrenze erreicht':
                 permission_reason = 'Innerhalb des Puffers'
     cleaning_permission = {'ready': permission_ready, 'title': permission_title, 'reason': permission_reason}
@@ -2993,9 +3093,16 @@ def build_live_dashboard_view(summary):
         if display_state == 'cleaning':
             title = 'Reinigung abgeschlossen'
     drying = []
+    bag_status = normalized_signal_state(signals.get('dust_bag_drying_status'))
+    if not bag_status or bag_status in {'unknown', 'unavailable'}:
+        bag_status = str(attrs.get('dust_bag_drying_status') or '').strip().lower()
+    # The explicit status wins over MOVA's boolean, which can remain latched
+    # after drying has ended. Only fall back when the status is unavailable.
+    bag_drying = (bag_status == 'drying' if bag_status and bag_status not in {'unknown', 'unavailable'}
+                  else dashboard_flag(attrs.get('dust_bag_drying')))
     for key, label, active in (
         ('drying_left', 'Mops', dashboard_flag(attrs.get('drying')) or display_state == 'drying'),
-        ('dust_bag_drying_left', 'Staubbeutel', dashboard_flag(attrs.get('dust_bag_drying')) or normalized_signal_state(signals.get('dust_bag_drying_status')) == 'drying'),
+        ('dust_bag_drying_left', 'Staubbeutel', bag_drying),
     ):
         minutes = number_value(state_value(signals.get(key), ''))
         if minutes is None:
@@ -3217,13 +3324,17 @@ def render_setting_number(key: str, title: str, description: str, entity_id: str
         hour = int(number_value(value, 0) or 0)
         hour = max(0, min(23, hour))
         display_value = f"{hour:02d}:00"
+    unit = {'return_buffer': 'min', 'start_margin': 'min', 'fallback_speed': 'km/h'}.get(key)
+    control = f'<input type="{input_type}" step="{escape(step)}" value="{escape(display_value)}" data-number-entity="{escape(entity_id)}" data-setting-key="{escape(key)}">'
+    if unit:
+        control = f'<span class="input-unit">{control}<span>{unit}</span></span>'
     return f"""
       <label class="number-row">
         <span>
           <strong>{escape(title)}</strong>
           <small>{escape(description)}</small>
         </span>
-        <input type="{input_type}" step="{escape(step)}" value="{escape(display_value)}" data-number-entity="{escape(entity_id)}" data-setting-key="{escape(key)}">
+        {control}
       </label>
     """
 
@@ -3302,18 +3413,20 @@ def render_settings_weekdays(summary: dict) -> str:
 
 
 def render_settings_push(summary: dict) -> str:
-    global_entities = summary.get("entities", {}).get("global", {})
-    global_states = summary.get("states", {}).get("global", {})
-    items = [
-        ("start_push", "Start-Push", "Benachrichtigung, wenn der Staubsauger automatisch loslegt."),
-        ("return_push", "Rückkehr-Zusammenfassung", "Benachrichtigt dich bei der Rückkehr, welche Räume während der Abwesenheit gereinigt wurden."),
-    ]
-    rows = [
-        render_setting_toggle(key, title, description, global_entities.get(key, ""), global_states.get(key))
-        for key, title, description in items
-        if global_entities.get(key)
-    ]
-    return "".join(rows) or '<p class="empty">Keine Push-Helper gefunden.</p>'
+    prefs = load_notification_preferences()
+    global_entities = summary.get('entities', {}).get('global', {})
+    global_states = summary.get('states', {}).get('global', {})
+    rows = []
+    for kind, key, title, description in (
+        ('start', 'start_push', 'Reinigungsstart', 'Benachrichtigung, wenn eine automatische Reinigung startet.'),
+        ('return', 'return_push', 'Rückkehrbericht', 'Bericht über gereinigte Räume, wenn du nach Hause kommst.'),
+    ):
+        toggle = render_setting_toggle(key, title, description, global_entities.get(key, ''), global_states.get(key))
+        rule = (f'''<label class="return-push-rule"><span>Bericht senden</span><select data-return-push-rule>
+          <option value="first" {'selected' if prefs.get('return_delivery', 'first') == 'first' else ''}>Nur bei der ersten Rückkehr</option>
+          <option value="each" {'selected' if prefs.get('return_delivery') == 'each' else ''}>Jede Person bei ihrer Rückkehr</option></select></label>''' if kind == 'return' else '')
+        rows.append(f'<div class="push-message-setting">{toggle}{rule}</div>')
+    return ''.join(rows)
 
 
 def render_settings_schedule(summary: dict) -> str:
@@ -3347,6 +3460,59 @@ def render_settings_travel_toggle(summary: dict) -> str:
     return "".join(rows) or '<p class="empty">Keine Reiselogik-Helper gefunden.</p>'
 
 
+def load_return_settings():
+    defaults = {"mode": "time", "buffer_m": 500, "margin_m": 500, "dwell_min": 10, "require_cleaned_area": True}
+    try:
+        data = json.loads(DASHBOARD_ORDER_PATH.with_name('return_settings.json').read_text())
+        data = {**defaults, **data}
+        if not isinstance(data['require_cleaned_area'], bool):
+            return defaults
+        if isinstance(data['dwell_min'], bool) or not math.isfinite(float(data['dwell_min'])) or not 1 <= float(data['dwell_min']) <= 120:
+            return defaults
+        if data.get('mode') not in {'time', 'distance'}:
+            return defaults
+        for key in ('buffer_m', 'margin_m'):
+            value = float(data[key])
+            if not math.isfinite(value) or not 1 <= value <= 100000:
+                return defaults
+        return data
+    except (OSError, ValueError, TypeError, KeyError):
+        return defaults
+
+
+def save_return_settings(payload):
+    with PERSON_DEVICE_LOCK:
+        data = load_return_settings()
+        if not isinstance(payload, dict) or set(payload) - {'mode', 'buffer_m', 'margin_m', 'dwell_min', 'require_cleaned_area'}:
+            raise ValueError('Ungültige Einstellung')
+        data.update(payload)
+        if not isinstance(data['require_cleaned_area'], bool):
+            raise ValueError('Ungültige Flächenprüfung')
+        if data['mode'] not in {'time', 'distance'}:
+            raise ValueError('Ungültiger Modus')
+        for key in ('buffer_m', 'margin_m'):
+            value = float(data[key])
+            if isinstance(data[key], bool) or not math.isfinite(value) or not 1 <= value <= 100000:
+                raise ValueError('Entfernung muss zwischen 1 und 100000 Metern liegen')
+            data[key] = value
+        dwell = float(data['dwell_min'])
+        if isinstance(data['dwell_min'], bool) or not math.isfinite(dwell) or not 1 <= dwell <= 120:
+            raise ValueError('Verweildauer muss zwischen 1 und 120 Minuten liegen')
+        data['dwell_min'] = dwell
+        path = DASHBOARD_ORDER_PATH.with_name('return_settings.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(json.dumps(data))
+        tmp.replace(path)
+
+
+def render_settings_area_check():
+    enabled = load_return_settings()['require_cleaned_area']
+    return f'''<article class="setting-row area-check"><div class="setting-copy"><strong>0 m² nicht werten</strong>
+      <span>Bei gemeldeten 0 m² bleibt der Raum fällig. Fehlt die Flächenangabe, gilt die Erfolgsmeldung des Roboters.</span></div>
+      <label class="switch" aria-label="Reinigung bei 0 m² nicht werten"><input type="checkbox" data-return-setting-key="require_cleaned_area" {'checked' if enabled else ''}><span></span><em>{'Aktiv' if enabled else 'Inaktiv'}</em></label></article>'''
+
+
 def render_settings_numbers(summary: dict) -> str:
     global_entities = summary.get("entities", {}).get("global", {})
     global_states = summary.get("states", {}).get("global", {})
@@ -3359,7 +3525,18 @@ def render_settings_numbers(summary: dict) -> str:
         for key, title, description, step in items
         if global_entities.get(key)
     ]
-    return "".join(rows) or '<p class="empty">Keine Zahlen-Helper gefunden.</p>'
+    time_rows = "".join(rows) or '<p class="empty">Keine Zahlen-Helper gefunden.</p>'
+
+    config = load_return_settings()
+    distance = config['mode'] == 'distance'
+    return f'''      <div data-return-time {'hidden' if distance else ''}>{time_rows}</div>
+      <div data-return-distance {'' if distance else 'hidden'}>
+      <label class="return-push-rule"><span>Puffer</span><span class="input-unit"><input type="number" min="1" max="100000" step="50" data-return-distance-key="buffer_m" value="{config['buffer_m']:g}"><span>m</span></span></label>
+      <p class="room-name-note">Innerhalb des Puffers startet keine Reinigung. Bei Annäherung wird die laufende automatische Reinigung gestoppt.</p>
+      <label class="return-push-rule"><span>Zusätzlicher Startabstand</span><span class="input-unit"><input type="number" min="1" max="100000" step="50" data-return-distance-key="margin_m" value="{config['margin_m']:g}"><span>m</span></span></label>
+      <p class="room-name-note">Zwischen Puffer und Startgrenze ist bestätigtes Verweilen nötig. Ab Puffer + Startabstand kann die Reinigung direkt beginnen. Entfernungen gelten als Luftlinie.</p></div>
+      <label class="return-push-rule"><span>Verweildauer</span><span class="input-unit"><input type="number" min="1" max="120" step="1" data-return-setting-key="dwell_min" value="{config['dwell_min']:g}"><span>min</span></span></label>
+      <p class="room-name-note">So lange musst du zwischen Puffer und Startgrenze in einem Bereich verweilen, bevor die Reinigung starten darf.</p>'''
 
 
 def render_settings_home_map(summary: dict) -> str:
@@ -3527,7 +3704,7 @@ def tracking_choices(summary: dict) -> list[dict]:
     people = selected_presence_from_summary(summary)
     tracked = {item.get("entity_id") for item in summary.get("available_presence_entities", []) if item.get("has_device")}
     local_available = bool(people) and all(person in tracked for person in people)
-    result = [{"id": "local", "name": "Entfernungsschätzung", "available": local_available, "active": active == "local",
+    result = [{"id": "local", "name": "Standort", "available": local_available, "active": active == "local",
                "detail": "Zeit bis zuhause aus Standort und Schätzgeschwindigkeit berechnen" if local_available else "Den berücksichtigten Personen in Home Assistant ein Standortgerät zuordnen."}]
     for mode, name, description, units in [
         ("waze", "Waze", "Fahrzeit nach Hause mit aktueller Verkehrslage berechnen", {"min", "s", "h"}),
@@ -3557,6 +3734,11 @@ def render_settings_presence(summary: dict) -> str:
     with_device = [p for p in people if p.get("has_device")]
     without_device = [p for p in people if not p.get("has_device") and p.get("entity_id", "").startswith("person.")]
 
+    prefs = load_notification_preferences()
+    try:
+        push_services = mobile_push_services()
+    except Exception:
+        push_services = []
     rows = []
     for person in with_device:
         person_id = str(person.get("entity_id") or "")
@@ -3584,6 +3766,7 @@ def render_settings_presence(summary: dict) -> str:
                 <span aria-hidden="true"></span><em>Berücksichtigen</em>
               </label>
               {render_person_wifi_picker(person, summary)}
+              {render_person_push(person, prefs, push_services)}
             </article>
             """
         )
@@ -3593,15 +3776,16 @@ def render_settings_presence(summary: dict) -> str:
         person_id = str(person.get("entity_id") or "")
         rows.append(
             f"""
-            <div class="presence-choice disabled" aria-disabled="true">
-              <span>
+            <article class="person-setting unavailable-person">
+              <div class="person-setting-info">
                 <strong>{escape(person.get("name"))}</strong>
                 <small>{escape(person_id)}</small>
                 <span class="state-badge state-no-device">Kein Gerät</span>
-              </span>
-              <em>Nicht nutzbar</em>
+              </div>
+              <span class="person-unavailable-label">Nicht nutzbar</span>
               {render_person_wifi_picker(person, summary)}
-            </div>
+              {render_person_push(person, prefs, push_services)}
+            </article>
             """
         )
 
@@ -3613,7 +3797,7 @@ def render_settings_presence(summary: dict) -> str:
             ["Home Assistant Companion App auf dem Handy einrichten und Standortzugriff erlauben.",
              "In Home Assistant unter Einstellungen → Personen das Handy der Person zur Standortverfolgung zuordnen.",
              "Die Home-Zone prüfen. Die Person muss einen aktuellen Standort mit Breiten- und Längengrad liefern.",
-             "Diese Seite neu laden, die Person berücksichtigen und Entfernungsschätzung auswählen. Die Zeit bis zuhause wird direkt aus dem Standort und der Schätzgeschwindigkeit berechnet. Ein zusätzlicher Sensor ist nicht nötig."],
+             "Diese Seite neu laden, die Person berücksichtigen und Standort auswählen. Die Zeit bis zuhause wird direkt aus dem Standort und der Schätzgeschwindigkeit berechnet. Ein zusätzlicher Sensor ist nicht nötig."],
             "https://www.home-assistant.io/integrations/person/"),
         "waze": (
             ["In Home Assistant Einstellungen → Geräte & Dienste → Integration hinzufügen öffnen und Waze Travel Time hinzufügen.",
@@ -3623,14 +3807,49 @@ def render_settings_presence(summary: dict) -> str:
              "Nach Übernahme der Konfiguration diese Seite neu laden und Waze auswählen. Aktuell wird eine berücksichtigte Person mit ihrem Sensor unterstützt."],
             "https://www.home-assistant.io/integrations/waze_travel_time/"),
     }
+    speed = number_value(state_value(summary.get('states', {}).get('global', {}).get('fallback_speed'), ''), 5) or 5
+    speed_entity = summary.get('entities', {}).get('global', {}).get('fallback_speed', '')
+    # iconmonstr SVGs, with the pedestrian adapted to a walking pose. Sources: dashboard/ICON-LICENSE.md.
+    icons = {
+        'Zu Fuß': '<circle cx="14" cy="3.2" r="2.5"/><path d="m13 8-2 6" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="m12.5 8-3 1.5-2 3.5m5.5-5 2.5 4 3 1m-7-1-1 5-3 5m3-9 4 4 1 5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>',
+        'Fahrrad': '<path d="M8.141 11.624l-.653-.519c-.395-.312-.477-.878-.187-1.291l2.474-3.519c.237-.337.7-.42 1.04-.186l4.185 2.884h1.5c.31 0 .5.259.5.5 0 .276-.224.5-.5.5h-.728l1.3 2.393c.593-.248 1.244-.386 1.928-.386 2.76 0 5 2.24 5 5s-2.24 5-5 5-5-2.24-5-5c0-1.72.87-3.237 2.193-4.138l-1.563-2.877-2.541-.782-.872 1.309 2.287 2.948c.179.231.216.535.122.811-.338.994-1.201 3.429-1.567 4.398-.09.244-.351.38-.604.316l-.023-.006c-.286-.071-.46-.347-.42-.637.156-1.159.573-3.986.573-3.986l-2.659-2.109-.674.957c1.07.917 1.748 2.277 1.748 3.796 0 2.76-2.24 5-5 5s-5-2.24-5-5 2.24-5 5-5c.883 0 1.712.229 2.433.632l.708-1.008zm-1.288 1.831c-.554-.291-1.185-.455-1.853-.455-2.208 0-4 1.792-4 4s1.792 4 4 4c2.207 0 4-1.792 4-4 0-1.18-.512-2.241-1.326-2.974l-1.779 2.529c.067.133.105.285.105.445 0 .552-.448 1-1 1s-1-.448-1-1 .448-1 1-1l.061.002 1.792-2.547zm9.821.292c-1.014.726-1.674 1.913-1.674 3.253 0 2.208 1.792 4 4 4s4-1.792 4-4-1.792-4-4-4c-.511 0-.998.096-1.447.27l1.483 2.731c.535.019.964.459.964.999 0 .552-.448 1-1 1s-1-.448-1-1c0-.194.056-.377.152-.53l-1.478-2.723zm-3.597-11.747c1.147 0 2.077.931 2.077 2.077 0 1.147-.93 2.077-2.077 2.077-1.146 0-2.077-.93-2.077-2.077 0-1.146.931-2.077 2.077-2.077z"/>',
+        'Öffis': '<path d="M6 24h-2c-.552 0-1-.448-1-1v-1c-.53 0-1.039-.211-1.414-.586s-.586-.884-.586-1.414v-8c-.552 0-1-.448-1-1v-3c0-.552.448-1 1-1v-4c0-1.657 1.343-3 3-3h16c1.657 0 3 1.343 3 3v4c.552 0 1 .448 1 1v3c0 .552-.448 1-1 1v8c0 .53-.211 1.039-.586 1.414s-.884.586-1.414.586v1c0 .552-.448 1-1 1h-2c-.552 0-1-.448-1-1v-1h-10v1c0 .552-.448 1-1 1zm-1.5-7c.828 0 1.5.672 1.5 1.5s-.672 1.5-1.5 1.5-1.5-.672-1.5-1.5.672-1.5 1.5-1.5zm15 0c.828 0 1.5.672 1.5 1.5s-.672 1.5-1.5 1.5-1.5-.672-1.5-1.5.672-1.5 1.5-1.5zm-5 1h-5c-.276 0-.5.224-.5.5s.224.5.5.5h5c.276 0 .5-.224.5-.5s-.224-.5-.5-.5zm6.5-12.5c0-.276-.224-.5-.5-.5h-17c-.276 0-.5.224-.5.5v8.5s3.098 1 9 1 9-1 9-1v-8.5zm-5-3.5h-8v1h8v-1z"/>',
+        'Auto': '<path d="M23.5 7c.276 0 .5.224.5.5v.511c0 .793-.926.989-1.616.989l-1.086-2h2.202zm-1.441 3.506c.639 1.186.946 2.252.946 3.666 0 1.37-.397 2.533-1.005 3.981v1.847c0 .552-.448 1-1 1h-1.5c-.552 0-1-.448-1-1v-1h-13v1c0 .552-.448 1-1 1h-1.5c-.552 0-1-.448-1-1v-1.847c-.608-1.448-1.005-2.611-1.005-3.981 0-1.414.307-2.48.946-3.666.829-1.537 1.851-3.453 2.93-5.252.828-1.382 1.262-1.707 2.278-1.889 1.532-.275 2.918-.365 4.851-.365s3.319.09 4.851.365c1.016.182 1.45.507 2.278 1.889 1.079 1.799 2.101 3.715 2.93 5.252zm-16.059 2.994c0-.828-.672-1.5-1.5-1.5s-1.5.672-1.5 1.5.672 1.5 1.5 1.5 1.5-.672 1.5-1.5zm10 1c0-.276-.224-.5-.5-.5h-7c-.276 0-.5.224-.5.5s.224.5.5.5h7c.276 0 .5-.224.5-.5zm2.941-5.527s-.74-1.826-1.631-3.142c-.202-.298-.515-.502-.869-.566-1.511-.272-2.835-.359-4.441-.359s-2.93.087-4.441.359c-.354.063-.667.267-.869.566-.891 1.315-1.631 3.142-1.631 3.142 1.64.313 4.309.497 6.941.497s5.301-.184 6.941-.497zm2.059 4.527c0-.828-.672-1.5-1.5-1.5s-1.5.672-1.5 1.5.672 1.5 1.5 1.5 1.5-.672 1.5-1.5zm-18.298-6.5h-2.202c-.276 0-.5.224-.5.5v.511c0 .793.926.989 1.616.989l1.086-2z"/>',
+    }
+    presets = [('Zu Fuß', 5, 0), ('Fahrrad', 15, 25), ('Öffis', 20, 50), ('Auto', 30, 75)]
+    speed_presets = ''.join(f'<button type="button" style="--station:{position}%" data-speed-preset="{value}" aria-label="{label}: {value} km/h" title="{label} · {value} km/h" aria-pressed="{str(speed == value).lower()}"><svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd">{icons[label]}</svg></button>' for label, value, position in presets)
+    knots = [(5, 0), (15, 25), (20, 50), (30, 75), (130, 100)]
+    position = 100
+    for (low, left), (high, right) in zip(knots, knots[1:]):
+        if speed <= high:
+            position = left + (max(low, speed) - low) / (high - low) * (right - left)
+            break
+    distance_mode = load_return_settings()['mode'] == 'distance'
+    mode_editor = f'''<label class="return-push-rule estimation-mode"><span>Freigabe nach</span><select data-return-mode>
+      <option value="time" {'selected' if not distance_mode else ''}>Zeit</option>
+      <option value="distance" {'selected' if distance_mode else ''}>Distanz</option></select></label>'''
+    speed_editor = f'''<div class="speed-editor" data-speed-editor {'hidden' if distance_mode else ''}>
+      <div class="speed-heading">Schätzgeschwindigkeit</div>
+      <div class="speed-controls"><div class="speed-scale">
+      <input type="range" min="0" max="100" step="0.1" value="{position:g}" data-speed-slider aria-label="Schätzgeschwindigkeit" aria-valuetext="{speed:g} km/h">
+      <div class="speed-presets">{speed_presets}</div></div>
+      <span class="input-unit"><input type="number" min="5" max="130" step="1" value="{speed:g}" data-number-entity="{escape(speed_entity)}" data-setting-key="fallback_speed" aria-label="Schätzgeschwindigkeit"><span>km/h</span></span></div>
+      <p data-speed-example>Bei 2 km Luftlinie: ca. {math.ceil(120 / speed)} Minuten.</p>
+      <small>Vorgaben sind grobe Schätzwerte. Straßen, Verkehr und Wartezeiten werden nicht berücksichtigt.</small>
+    </div>'''
     rendered_tracking = []
     for item in tracking:
         steps, documentation = guides[item["id"]]
         guide = '<details class="tracking-setup"><summary>Einrichtung</summary><ol>' + ''.join(f'<li>{step}</li>' for step in steps) + f'</ol><a href="{documentation}" target="_blank" rel="noopener">Home-Assistant-Anleitung ↗</a></details>'
-        rendered_tracking.append(f'<article class="tracking-option {"selected" if item["active"] else ""} {"unavailable" if not item["available"] else ""}" data-tracking-option="{item["id"]}" data-available="{str(item["available"]).lower()}"><label class="tracking-option-choice"><div><strong>{escape(item["name"])}</strong><span class="tracking-choice-state"><span class="tracking-availability {"available" if item["available"] else ""}">{"Aktiv" if item["active"] else "Verfügbar" if item["available"] else "Nicht verfügbar"}</span><input type="radio" name="tracking-method" value="{item["id"]}" data-tracking-radio aria-label="{escape(item["name"])}" {"checked" if item["active"] else ""} {"disabled" if not item["available"] else ""}></span></div><p>{escape(item["detail"])}</p></label>{guide}</article>')
+        if item['id'] == 'local' and item['available']:
+            item['detail'] = 'Entfernung als Luftlinie aus dem Standort bestimmen.' if distance_mode else 'Zeit bis zuhause aus Standort und Schätzgeschwindigkeit berechnen.'
+        editor = mode_editor + speed_editor if item['id'] == 'local' else ''
+        time_only = ('data-return-time-source hidden' if distance_mode else 'data-return-time-source') if item['id'] == 'waze' else ''
+        description_attr = 'data-location-description' if item['id'] == 'local' and item['available'] else ''
+        rendered_tracking.append(f'<article {time_only} class="tracking-option {"selected" if item["active"] else ""} {"unavailable" if not item["available"] else ""}" data-tracking-option="{item["id"]}" data-available="{str(item["available"]).lower()}"><label class="tracking-option-choice"><div><strong>{escape(item["name"])}</strong><span class="tracking-choice-state"><span class="tracking-availability {"available" if item["available"] else ""}">{"Aktiv" if item["active"] else "Verfügbar" if item["available"] else "Nicht verfügbar"}</span><input type="radio" name="tracking-method" value="{item["id"]}" data-tracking-radio aria-label="{escape(item["name"])}" {"checked" if item["active"] else ""} {"disabled" if not item["available"] else ""}></span></div><p {description_attr}>{escape(item["detail"])}</p></label>{editor}{guide}</article>')
     tracking_cards = ''.join(rendered_tracking)
 
-    tracking_ui = f'<div class="tracking-options" data-tracking-picker data-entity="{escape(tracking_entity)}"><strong class="tracking-select-label">Rückkehrzeit berechnen mit</strong><div class="tracking-option-list" role="radiogroup" aria-label="Tracking-Methode">{tracking_cards}</div></div>'
+    tracking_ui = f'<div class="tracking-options" data-tracking-picker data-entity="{escape(tracking_entity)}"><strong class="tracking-select-label">Entfernung & Rückkehr</strong><div class="tracking-option-list" role="radiogroup" aria-label="Tracking-Methode">{tracking_cards}</div></div>'
 
     ha_base = os.environ.get("VACUUM_DASHBOARD_API", "").removesuffix("/api").rstrip("/")
     manage_link = f'<a class="manage-people" href="{escape(ha_base)}/config/person" target="_blank" rel="noopener">＋ Person hinzufügen ↗</a>' if ha_base.startswith(("http://", "https://")) else ""
@@ -3657,20 +3876,20 @@ def render_settings_analysis(summary: dict) -> str:
     historical = a.get("motion_history") or {}
     history_metrics = ''.join(f'<div><strong>{int(historical.get(key) or 0)}</strong><span>{label}</span></div>' for key, label in [
         ('gps_reports', 'GPS-Meldungen'), ('usable_reports', 'Auswertbare Meldungen'),
-        ('dwell_episodes', 'Erkannte Aufenthalte'), ('extra_release_reports', 'Zusätzliche Startgelegenheiten'),
+        ('dwell_episodes', 'Bestätigtes Verweilen'), ('extra_release_reports', 'Zusätzliche Startgelegenheiten'),
         ('approach_stops', 'Annäherungen an Stoppgrenze'), ('gaps', 'Datenlücken über 10 min')])
     from zoneinfo import ZoneInfo
     def history_date(value):
         parsed = parse_datetime(value)
         return parsed.astimezone(ZoneInfo('Europe/Berlin')).strftime('%d.%m.%Y %H:%M') if parsed else 'keine Daten'
     coverage = f"Aufgezeichnet: {history_date(historical.get('first_report'))} bis {history_date(historical.get('last_report'))}." if historical else 'Historische Standortmeldungen noch nicht ausgewertet.'
-    historical_section = f'<section class="section"><div class="section-header"><h2>Aufenthalt & Annäherung · Historie</h2></div><p>{escape(coverage)}</p><div class="analysis-metrics">{history_metrics}</div><p class="analysis-note">{int(historical.get("home_reports") or 0)} Meldungen zuhause · {int(historical.get("unknown_presence_reports") or 0)} mit historisch unvollständiger Anwesenheit · {int(historical.get("unusable_gps_reports") or 0)} mit unbrauchbaren GPS-Daten. Null erkannte Aufenthalte bedeutet bei Datenlücken nicht, dass keine stattgefunden haben.</p><p class="analysis-note">{escape(historical.get("note", "Fehlende Standortverläufe werden nicht aus Rückkehrzeiten rekonstruiert."))}</p><p class="analysis-note">Vergleich: {escape(historical.get("speed_kmh", "—"))} km/h · Puffer {escape(historical.get("buffer_min", "—"))} min · Startabstand {escape(historical.get("margin_min", "—"))} min. Seit Einführung: {int(a.get("stationary_samples") or 0)} Messpunkte mit Aufenthaltsfreigabe. Keine Speicherung genauer Positionen in dieser Auswertung.</p></section>'
+    historical_section = f'<section class="section"><div class="section-header"><h2>Verweilen & Annäherung · Historie</h2></div><p>{escape(coverage)}</p><div class="analysis-metrics">{history_metrics}</div><p class="analysis-note">{int(historical.get("home_reports") or 0)} Meldungen zuhause · {int(historical.get("unknown_presence_reports") or 0)} mit historisch unvollständiger Anwesenheit · {int(historical.get("unusable_gps_reports") or 0)} mit unbrauchbaren GPS-Daten. Kein bestätigtes Verweilen bedeutet bei Datenlücken nicht, dass keine stattgefunden haben.</p><p class="analysis-note">{escape(historical.get("note", "Fehlende Standortverläufe werden nicht aus Rückkehrzeiten rekonstruiert."))}</p><p class="analysis-note">Vergleich: {escape(historical.get("speed_kmh", "—"))} km/h · Puffer {escape(historical.get("buffer_min", "—"))} min · Startabstand {escape(historical.get("margin_min", "—"))} min. Seit Einführung: {int(a.get("stationary_samples") or 0)} Messpunkte mit Verweilfreigabe. Keine Speicherung genauer Positionen in dieser Auswertung.</p></section>'
     return f"""<section class="section analysis-live">
       <div class="section-header"><h2>Jetzt · Beobachtung</h2></div>
       <strong class="analysis-decision">{escape(a.get('decision', 'Daten werden geladen'))}</strong>
       <p>{escape(a.get('detail', 'Die Auswertung beginnt mit der nächsten Standortmeldung.'))}</p>
       <div class="analysis-metrics"><div><strong>{escape(policy.get('start_at_min', '—'))} min</strong><span>Start ab</span></div><div><strong>{escape(policy.get('stop_at_min', '—'))} min</strong><span>Reinigung stoppen bei</span></div><div><strong>{escape(policy.get('eta_min') if policy.get('eta_min') is not None else '—')} min</strong><span>Zeit bis zuhause</span></div></div>
-      <p class="analysis-note">Aufenthalt: mindestens 10 min innerhalb von 75 m mit frischen GPS-Meldungen. Laufende Reinigung stoppt bei Annäherung innerhalb des Puffers. Bewegung weg von zuhause stoppt sie nicht. Bei Datenlücken gilt wieder die Zeitgrenze.</p>
+      <p class="analysis-note">Verweilen: mindestens {load_return_settings()['dwell_min']:g} min in einem begrenzt mitwandernden Bereich mit maximal 750 m Gesamtausdehnung und frischen GPS-Meldungen. Laufende Reinigung stoppt bei Annäherung innerhalb des Puffers. Bewegung weg von zuhause stoppt sie nicht. Bei Datenlücken pausiert der Verweilzähler. Eine laufende Reinigung wird allein dadurch nicht beendet.</p>
     </section>
     {historical_section}
     <section class="section"><div class="section-header"><h2>Puffer vergleichen</h2></div>
@@ -3729,6 +3948,7 @@ def render_settings_html() -> str:
         "settings_home_map": render_settings_home_map(summary),
         "settings_presence": render_settings_presence(summary),
         "settings_rooms": render_settings_rooms(summary),
+        "settings_area_check": render_settings_area_check(),
         "settings_cleaning_defaults": render_settings_cleaning_defaults(summary),
         "settings_system": render_settings_system(summary),
         "settings_analysis": render_settings_analysis(summary),
@@ -5188,7 +5408,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         status = summary.get("status", {})
         presence_panel = '<section class="card"><h2>Anwesenheit und Heimweg</h2>' + render_presence_rows(summary)
         speed = summary.get("states", {}).get("global", {}).get("fallback_speed")
-        speed_value = state_value(speed, summary.get("options", {}).get("fallback_speed_kmh", 30))
+        speed_value = state_value(speed, summary.get("options", {}).get("fallback_speed_kmh", 5))
         presence_panel += '<p>Heimweg: lokale Luftlinien-Schätzung mit ' + escape(speed_value) + ' km/h, keine ÖPNV-Route.</p>'
         presence_panel += '<p>Reisemodus: alle Personen jeweils ' + escape(status.get("travel_pause_after_hours")) + ' Stunden außerhalb von ' + escape(status.get("travel_pause_radius_km")) + ' km. Aktiv: ' + ('ja' if status.get("travel_mode_active") else 'nein') + '.</p></section>'
         room_panel = presence_panel + render_robot_diagnostics(summary) + room_panel
@@ -5231,7 +5451,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        if load_options().get("observation_mode", False) and parsed.path not in {"/api/toggle", "/api/set_number", "/api/set_text", "/api/person_wifi"}:
+        if load_options().get("observation_mode", False) and parsed.path not in {"/api/toggle", "/api/set_number", "/api/set_text", "/api/person_wifi", "/api/person_push", "/api/return_settings"}:
             self._json_response(
                 {"ok": False, "error": "Beobachtungsmodus: Gerätebefehle sind gesperrt."},
                 status=403,
@@ -5272,6 +5492,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/toggle":
             self._handle_toggle(parsed)
+            return
+        if parsed.path == "/api/return_settings":
+            try:
+                payload = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
+                save_return_settings(payload)
+                self._json_response({'ok': True})
+            except (ValueError, TypeError) as error:
+                self._json_response({'ok': False, 'error': str(error)}, status=400)
+            except Exception:
+                self._json_response({'ok': False, 'error': 'Speichern fehlgeschlagen'}, status=500)
+            return
+        if parsed.path == "/api/person_push":
+            try:
+                payload = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
+                save_notification_preferences(payload)
+                self._json_response({'ok': True, 'preferences': load_notification_preferences()})
+            except (ValueError, TypeError) as error:
+                self._json_response({'ok': False, 'error': str(error)}, status=400)
+            except Exception:
+                self._json_response({'ok': False, 'error': 'Push-Einstellung konnte nicht gespeichert werden.'}, status=502)
             return
         if parsed.path == "/api/person_wifi":
             try:
@@ -5431,7 +5671,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         value = payload.get("value")
         config = load_options()
         entity_map = helper_entities(config, parse_rooms(config.get("rooms")))
-        limits = {entity_map["global"]["return_buffer"]: (0, 30), entity_map["global"]["start_margin"]: (1, 60)}
+        limits = {entity_map["global"]["fallback_speed"]: (5, 130), entity_map["global"]["return_buffer"]: (0, 30), entity_map["global"]["start_margin"]: (1, 60)}
         limits.update({room["completion_percent"]: (1, 100) for room in entity_map["rooms"]})
         if entity_id in limits:
             numeric = number_value(value)

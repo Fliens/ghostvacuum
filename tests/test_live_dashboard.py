@@ -122,6 +122,24 @@ class LiveDashboard(unittest.TestCase):
         vacuum.update(state='cleaning')
         self.assertNotIn('Staubkasten',dashboard.build_live_dashboard_view(summary)['robot']['title'])
 
+    def test_explicit_idle_overrides_latched_drying_flag(self):
+        summary=self.summary()
+        summary['states']['vacuum'].update(state='docked')
+        attrs=summary['states']['vacuum']['attributes']
+        attrs.update(drying=False,dust_bag_drying=True,dust_bag_drying_left=0,
+                     dust_bag_drying_status='Idle')
+        summary['states']['robot']={'signals':{'dust_bag_drying_status':{'state':'idle'},
+                                              'dust_bag_drying_left':{'state':'unavailable'}}}
+        for signal in ('idle','unavailable'):
+            summary['states']['robot']['signals']['dust_bag_drying_status']['state']=signal
+            drying=dashboard.build_live_dashboard_view(summary)['robot']['drying'][1]
+            self.assertFalse(drying['active'])
+            self.assertEqual(drying['state'],'Inaktiv')
+            self.assertIsNone(drying['minutes'])
+        summary['states']['robot']['signals']['dust_bag_drying_status']['state']='drying'
+        attrs['dust_bag_drying']=False
+        self.assertTrue(dashboard.build_live_dashboard_view(summary)['robot']['drying'][1]['active'])
+
     def test_owned_room_is_active_during_initial_mop_preparation(self):
         summary=self.summary()
         summary['status'].update(observation_mode=False,active_room_manual=True)
@@ -176,7 +194,7 @@ class LiveDashboard(unittest.TestCase):
         summary['status']['return_policy'].update(allowed=True,stationary_release=True)
         permission = dashboard.build_live_dashboard_view(summary)['cleaning_permission']
         self.assertTrue(permission['ready'])
-        self.assertEqual(permission['reason'],'Aufenthalt bestätigt')
+        self.assertEqual(permission['reason'],'Verweilen bestätigt')
         summary['states']['global']['enabled']['state'] = 'off'
         permission = dashboard.build_live_dashboard_view(summary)['cleaning_permission']
         self.assertFalse(permission['ready'])
@@ -190,7 +208,7 @@ class LiveDashboard(unittest.TestCase):
         person.update(travel_time_min=7,motion='observing',stay_minutes=3)
         view = dashboard.build_live_dashboard_view(summary)
         self.assertEqual(view['cleaning_permission']['title'],'Automatik wartet')
-        self.assertEqual(view['cleaning_permission']['reason'],'Freigabe nach 10 Minuten Aufenthalt')
+        self.assertEqual(view['cleaning_permission']['reason'],'Freigabe nach 10 Minuten Verweilen')
         self.assertEqual(view['people'][0]['stay_progress'],{'minutes':3,'required':10})
         person['travel_time_min'] = 5
         self.assertIsNone(dashboard.build_live_dashboard_view(summary)['people'][0]['stay_progress'])

@@ -119,6 +119,11 @@
       box-shadow: var(--shadow);
       padding: 16px;
     }
+    .setting-row.area-check {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px 18px;align-items:center;}
+    .area-check .setting-copy {display:contents;}
+    .area-check .setting-copy > strong {grid-column:1;grid-row:1;}
+    .area-check .setting-copy > span {grid-column:1 / -1;grid-row:2;}
+    .area-check .switch {grid-column:2;grid-row:1;width:auto;}
     .settings-separator {
       border: 0;
       border-top: 1px solid var(--line);
@@ -1166,6 +1171,41 @@
     .person-wifi small {display:block;color:var(--muted);font-size:11px;margin-top:3px;font-weight:400;}
     .person-wifi select {width:100%;min-width:0;min-height:40px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font:inherit;}
     @media(max-width:600px){.person-wifi{grid-template-columns:1fr;gap:8px;}}
+    .person-setting.unavailable-person {background:var(--panel-soft);color:var(--muted);}
+    .unavailable-person .person-setting-info {min-width:0;flex:1;}
+    .unavailable-person .person-setting-info small {font-size:11px;overflow-wrap:anywhere;}
+    .unavailable-person .state-badge {margin-left:0;white-space:nowrap;}
+    .person-unavailable-label {flex-shrink:0;font-size:11px;color:var(--danger);background:rgba(178,76,61,.1);border-radius:999px;padding:3px 8px;}
+    .person-push {flex-basis:100%;border-top:1px solid var(--line);padding-top:12px;display:grid;gap:10px;font-size:13px;}
+    .push-device {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+    .push-device-name {font-size:11px;color:var(--muted);}
+    .push-options {display:flex;gap:12px 20px;flex-wrap:wrap;}
+    .push-options label {display:flex;align-items:center;gap:6px;font-size:12px;}
+    .push-options input {accent-color:var(--accent);width:17px;height:17px;}
+    .person-push select,.return-push-rule select {min-width:0;max-width:100%;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);}
+    .return-push-rule {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-top:1px solid var(--line);margin-top:18px;padding-top:16px;font-size:13px;}
+    [data-return-time-source][hidden],[data-speed-editor][hidden] {display:none!important;}
+    .speed-editor {margin:16px 0;padding-top:14px;border-top:1px solid var(--line);}
+    .speed-heading {font-size:13px;margin-bottom:12px;}
+    .speed-controls {display:flex;align-items:flex-start;gap:16px;}
+    .speed-controls>.input-unit {width:100px;margin-top:0;}
+    .speed-scale {flex:1;min-width:0;padding:0 12px;}
+    .speed-editor input[type=range] {display:block;width:100%;height:24px;margin:6px 0 0;accent-color:var(--accent);}
+    .speed-presets {position:relative;height:40px;margin:0 8px;}
+    .speed-presets button {position:absolute;left:var(--station);transform:translateX(-50%);width:32px;height:36px;display:grid;place-items:center;padding:7px 5px 0;border:0;background:transparent;color:var(--muted);cursor:pointer;}
+    .speed-presets button::before {content:'';position:absolute;top:0;left:50%;height:5px;border-left:1px solid var(--muted);}
+    .speed-presets svg {width:22px;height:22px;}
+    .speed-presets button[aria-pressed=true] {color:var(--accent);}
+    .speed-presets button:focus-visible {outline:2px solid var(--accent);border-radius:5px;}
+    .speed-editor>small {display:block;color:var(--muted);font-size:11px;line-height:1.5;}
+    .input-unit,.number-row>.input-unit {display:inline-flex;align-items:center;width:125px;flex:none;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden;}
+    .input-unit input {min-width:0;width:0!important;flex:1 1 auto;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent;padding:10px;}
+    .input-unit>span {flex:none;padding-right:10px;font-size:12px;color:var(--muted);white-space:nowrap;}
+
+    .person-push {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+    .push-message-setting {display:grid;gap:10px;}
+    .push-message-setting+.push-message-setting {margin-top:18px;}
+    .push-message-setting .return-push-rule {margin-top:0;border:0;padding:0 12px;}
     .person-setting.active {border-color:#b6d3c3;}
     .person-setting-info {display:flex;flex-direction:column;align-items:flex-start;gap:7px;}
     .person-setting-info strong {font-size:16px;}
@@ -1304,14 +1344,7 @@
             {{{settings_weekdays}}}
           </div>
       </section>
-      <section class="section">
-        <div class="section-header">
-          <h2>Push</h2>
-        </div>
-        <div class="settings-list">
-          {{{settings_push}}}
-        </div>
-      </section>
+      <section class="section"><div class="section-header"><h2>Push</h2></div><div class="settings-list">{{{settings_push}}}</div></section>
     </section>
 
     <section class="tab-panel" data-panel="return">
@@ -1350,6 +1383,10 @@
       <section class="section">
         <div class="section-header"><h2>Standard-Reinigung</h2><span class="section-hint">Für Räume ohne eigene Einstellungen</span></div>
         {{{settings_cleaning_defaults}}}
+      </section>
+      <section class="section">
+        <div class="section-header"><h2>Erfolgsprüfung</h2></div>
+        <div class="settings-list">{{{settings_area_check}}}</div>
       </section>
       <section class="section">
         <div class="section-header">
@@ -1635,6 +1672,40 @@
       }
     });
 
+    document.addEventListener('change', async event => {
+      const control = event.target.closest('[data-person-push-enabled], [data-return-push-rule]');
+      if (!control) return;
+      const payload = control.matches('[data-return-push-rule]') ? {return_delivery:control.value} :
+        {person:control.dataset.personPushEnabled,enabled:control.checked};
+      control.disabled = true;
+      try {
+        await postJson('/api/person_push', payload);
+        showToast('Push-Einstellung gespeichert');
+      } catch {
+        if (control.type === 'checkbox') control.checked = !control.checked;
+        showToast('Push-Einstellung konnte nicht gespeichert werden');
+      } finally {control.disabled = false;}
+    });
+    document.addEventListener('change', async event => {
+      const input = event.target.closest('[data-return-mode], [data-return-distance-key], [data-return-setting-key]');
+      if (!input) return;
+      const payload = input.matches('[data-return-mode]') ? {mode:input.value} : {[input.dataset.returnDistanceKey || input.dataset.returnSettingKey]:input.type === 'checkbox' ? input.checked : Number(input.value)};
+      input.disabled = true;
+      try {
+        await postJson('/api/return_settings', payload);
+        if (payload.mode) {
+          document.querySelector('[data-return-time]').hidden = payload.mode !== 'time';
+          document.querySelector('[data-return-distance]').hidden = payload.mode !== 'distance';
+          document.querySelector('[data-speed-editor]').hidden = payload.mode !== 'time';
+          const description = document.querySelector('[data-location-description]');
+          if (description) description.textContent = payload.mode === 'distance' ? 'Entfernung als Luftlinie aus dem Standort bestimmen.' : 'Zeit bis zuhause aus Standort und Schätzgeschwindigkeit berechnen.';
+          document.querySelectorAll('[data-return-time-source]').forEach(element => element.hidden = payload.mode !== 'time');
+        }
+        if (input.type === 'checkbox') input.closest('.switch').querySelector('em').textContent = input.checked ? 'Aktiv' : 'Inaktiv';
+        showToast('Gespeichert');
+      } catch {if (input.type === 'checkbox') input.checked = !input.checked; showToast('Konnte nicht speichern');}
+      finally {input.disabled = false;}
+    });
     document.querySelectorAll('[data-person-wifi]').forEach(select => select.dataset.savedWifi = select.value);
     document.addEventListener('change', async event => {
       const select = event.target.closest('[data-person-wifi]');
@@ -1670,6 +1741,45 @@
       if (event.target.matches("[data-completion-value]")) saveCompletion(event.target.closest("[data-completion-row]"));
     },true);
 
+    function syncSpeed(value) {
+      const input = document.querySelector('[data-setting-key="fallback_speed"]');
+      const slider = document.querySelector('[data-speed-slider]');
+      const speed = Number(value);
+      if (!Number.isFinite(speed) || speed < 5 || speed > 130) return;
+      input.value = String(speed);
+      const knots = [[5,0],[15,25],[20,50],[30,75],[130,100]];
+      for (let i=1;i<knots.length;i++) {
+        if (speed <= knots[i][0]) {
+          const [low,left] = knots[i-1], [high,right] = knots[i];
+          slider.value = String(left+(speed-low)/(high-low)*(right-left));
+          break;
+        }
+      }
+      slider.setAttribute('aria-valuetext',`${speed} km/h`);
+      document.querySelector('[data-speed-example]').textContent = `Bei 2 km Luftlinie: ca. ${Math.ceil(120/speed)} Minuten.`;
+      document.querySelectorAll('[data-speed-preset]').forEach(button => button.setAttribute('aria-pressed',String(Number(button.dataset.speedPreset) === speed)));
+    }
+    document.addEventListener('input', event => {
+      if (event.target.matches('[data-speed-slider]')) {
+        const position=Number(event.target.value), knots=[[0,5],[25,15],[50,20],[75,30],[100,130]];
+        for (let i=1;i<knots.length;i++) {
+          if (position<=knots[i][0]) {
+            const [left,low]=knots[i-1], [right,high]=knots[i];
+            syncSpeed(Math.round(low+(position-left)/(right-left)*(high-low)));
+            break;
+          }
+        }
+      } else if (event.target.matches('[data-setting-key="fallback_speed"]')) syncSpeed(event.target.value);
+    });
+    document.addEventListener('change', event => {
+      if (event.target.matches('[data-speed-slider]')) document.querySelector('[data-setting-key="fallback_speed"]').dispatchEvent(new FocusEvent('blur'));
+    });
+    document.addEventListener('click', event => {
+      const button = event.target.closest('[data-speed-preset]');
+      if (!button) return;
+      syncSpeed(button.dataset.speedPreset);
+      document.querySelector('[data-setting-key="fallback_speed"]').dispatchEvent(new FocusEvent('blur'));
+    });
     document.addEventListener("blur", async (event) => {
       const input = event.target.closest("[data-number-entity]");
       if (!input) return;
@@ -1694,6 +1804,9 @@
           value
         });
         showToast("Gespeichert");
+        if (input.dataset.settingKey === 'fallback_speed') {
+          syncSpeed(value);
+        }
         row?.classList.remove("saving");
       } catch (error) {
         showToast("Konnte nicht speichern");
